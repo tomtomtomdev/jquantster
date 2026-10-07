@@ -109,17 +109,26 @@ Later syncs are shorter.
 
 Each job resumes from what's already stored, and fills older gaps when the plan window moves.
 
-### Scheduling
+### Daily automatic sync
 
-J-Quants publishes daily prices around 16:30 JST and the investor-type breakdown around 16:30
-JST on the 4th business day after each week. On a paid plan, a weekday sync after 18:30 JST
-picks up the day. That's 16:30 in Jakarta (UTC+7):
-
-```cron
-30 16 * * 1-5  cd ~/Projects/jquantster && ./run.sh --sync-only >> data/sync.log 2>&1
+```bash
+./schedule.sh install          # weekdays at 18:45 Tokyo time, converted to your local time
+./schedule.sh install 07:30    # or pick your own local time
+./schedule.sh status           # schedule, last exit code, last run's output
+./schedule.sh run              # run it now through the scheduler
+./schedule.sh logs             # follow data/sync.log
+./schedule.sh uninstall
 ```
 
-On Free the data is 12 weeks old anyway, so once a day at any time is plenty.
+- **macOS:** installs a launchd agent (`~/Library/LaunchAgents/dev.tomtomtomdev.jquantster.sync.plist`).
+  A run missed while the Mac was asleep starts as soon as it wakes. A failed sync posts a
+  macOS notification.
+- **Linux:** adds a crontab entry instead.
+
+The default time follows J-Quants' publishing schedule: daily prices around 16:30 JST, the
+per-stock breakdown around 18:00 JST, and investor-type data on the 4th business day after
+each week. On Free the data is 12 weeks old anyway, so any time works. The log rotates at about
+1 MB.
 
 ## Data and storage
 
@@ -156,6 +165,7 @@ Notes:
 
 ```
 run.sh                  one-step install / sync / dashboard
+schedule.sh             daily auto-sync (launchd / cron)
 src/jquantster/
   config.py             plans, limits, .env loading
   client.py             HTTP client + SQLite-backed rate limiter

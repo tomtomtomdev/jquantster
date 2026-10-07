@@ -73,7 +73,10 @@ fi
 # 4. Fetch new data (rate-limited; re-runs only fetch what's new)
 if (( do_sync )); then
   step "Syncing data from J-Quants"
-  uv run jquantster sync || echo "Sync finished with some errors (see above); continuing."
+  if ! uv run jquantster sync; then
+    (( do_ui )) || exit 1  # let schedulers see the failure
+    echo "Sync finished with some errors (see above); continuing."
+  fi
 fi
 
 # 5. Dashboard
