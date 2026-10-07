@@ -28,7 +28,7 @@ for watchlist stocks. EDINET is government open data and needs a free Subscripti
 Each slice: write failing tests first (extend `tests/` with a fake EDINET transport like
 `tests/fake_api.py`), implement, run `uv run pytest -q` until green, tick the box, commit.
 
-- [ ] **1. Config + client.** `EDINET_API_KEY` and `EDINET_HISTORY_DAYS` (default 365) in
+- [x] **1. Config + client.** `EDINET_API_KEY` and `EDINET_HISTORY_DAYS` (default 365) in
   `Settings` / `.env.example`. `EdinetClient` (httpx, Subscription-Key query param, shared
   `RateLimiter` with an `edinet` bucket at 50/min, retries on 5xx/transport errors, 401/403 →
   `AuthError`, `metadata.status` ≠ 200 → error). `list_documents(date)` and

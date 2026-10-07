@@ -21,6 +21,9 @@ SAFETY = 0.8
 FINS_RPM = 60  # /fins/summary and /fins/details have their own cap on every plan
 COOLDOWN_AFTER_429 = 120  # seconds; the API sends no Retry-After
 
+EDINET_BASE_URL = "https://api.edinet-fsa.go.jp/api/v2"
+EDINET_RPM = 50  # unpublished limit; stay under ~1 request per second
+
 
 @dataclass(frozen=True)
 class Plan:
@@ -69,6 +72,8 @@ class Settings:
     plan: Plan
     watchlist: tuple[str, ...]
     db_path: Path
+    edinet_api_key: str = ""
+    edinet_history_days: int = 365
 
 
 def load_settings() -> Settings:
@@ -84,4 +89,6 @@ def load_settings() -> Settings:
         plan=PLANS[plan_name],
         watchlist=watchlist,
         db_path=Path(os.getenv("JQUANTS_DB", "data/jquantster.db")),
+        edinet_api_key=os.getenv("EDINET_API_KEY", "").strip(),
+        edinet_history_days=int(os.getenv("EDINET_HISTORY_DAYS", "365")),
     )
