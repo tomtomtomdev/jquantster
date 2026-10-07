@@ -1,75 +1,174 @@
 # jquantster
 
-Fetches Japanese market data from [J-Quants](https://jpx-jquants.com/en) (the JPX official API, V2),
-stores it in a local SQLite file, and shows it in a small Streamlit dashboard:
+Fetches Japanese stock market data from [J-Quants](https://jpx-jquants.com/en), the official
+API of Japan Exchange Group (JPX). It stays within your plan's rate limit, keeps the data in a
+local SQLite file, and shows it in a small Streamlit dashboard.
 
-- **Stock**: adjusted price and volume history for your watchlist, plus reported results
-- **Market**: advancers and decliners, top movers and most-traded stocks for a trading day
-- **Investor flows**: weekly net buying and selling by investor type (foreigners, individuals,
-  trust banks and so on) per TSE section (needs the Light plan or higher)
+![Stock tab](docs/stock.png)
+
+<sub>Screenshots use synthetic sample data. J-Quants data may not be redistributed.</sub>
+
+## What you get
+
+| Tab | Shows | Plan |
+|---|---|---|
+| **Stock** | Adjusted price and volume history for your watchlist, plus reported quarterly results (sales, profit, EPS) | Free+ |
+| **Market** | One trading day across all stocks: advancers and decliners, top movers, most traded | Free+ |
+| **Investor flows** | Weekly net buying and selling by investor type (foreigners, individuals, trust banks and so on) per TSE section | Light+ |
+
+| Market | Investor flows |
+|---|---|
+| ![Market tab](docs/market.png) | ![Investor flows tab](docs/flows.png) |
 
 ## Quick start
+
+You need macOS or Linux, and a free J-Quants account:
+
+1. Sign up at <https://jpx-jquants.com>.
+2. In the dashboard, open **API Keys** and create a key.
 
 ```bash
 git clone https://github.com/tomtomtomdev/jquantster && cd jquantster
 ./run.sh
 ```
 
-`run.sh` does the following:
-- installs [uv](https://docs.astral.sh/uv/) if it's missing, then Python and the dependencies
-- on first run, asks for your API key and plan and saves them to `.env`
-- syncs new data and opens the dashboard at http://localhost:8510
+`run.sh` does everything in one step:
+1. Installs [uv](https://docs.astral.sh/uv/) if it's missing, then Python 3.12 and the dependencies.
+2. On first run, asks for your API key (input hidden) and plan, and saves them to `.env`.
+3. Syncs new data from J-Quants.
+4. Opens the dashboard at <http://localhost:8510>.
 
-Re-running it only fetches what's new. Options: `--no-sync` (dashboard only),
-`--sync-only` (e.g. from cron). You can also skip the prompts with
-`JQUANTS_API_KEY=... JQUANTS_PLAN=light ./run.sh`.
+Run it again any time: it only fetches what's new.
 
-## Manual setup
+| Command | Does |
+|---|---|
+| `./run.sh` | Install if needed → sync → dashboard |
+| `./run.sh --no-sync` | Dashboard only |
+| `./run.sh --sync-only` | Sync and exit (for cron) |
+| `JQUANTS_API_KEY=… JQUANTS_PLAN=light ./run.sh` | First-time setup without prompts |
 
-1. Create a J-Quants account at <https://jpx-jquants.com>. The Free plan is enough to start.
-2. In the dashboard, open **API Keys** and create a key.
-3. Install and configure:
+## Configuration
+
+Settings live in `.env`. The file is git-ignored and readable only by you. `.env.example`
+is the template.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `JQUANTS_API_KEY` | – | Your API key. Required. |
+| `JQUANTS_PLAN` | `free` | `free`, `light`, `standard` or `premium`. Sets the rate limit and date window. |
+| `JQUANTS_WATCHLIST` | `7203,6758,8306,9984,6861` | Stocks whose full history is fetched (4-digit TSE codes) |
+| `JQUANTS_DB` | `data/jquantster.db` | SQLite file location |
+
+## Commands
+
+`run.sh` wraps these; you can also call them directly:
 
 ```bash
-uv sync
-cp .env.example .env   # paste your key, set JQUANTS_PLAN and JQUANTS_WATCHLIST
-uv run jquantster sync # fetch (safe to re-run; it only fetches what's new)
-uv run jquantster ui   # open the dashboard at http://localhost:8510
-uv run jquantster status
+uv run jquantster sync                    # fetch new data
+uv run jquantster sync --codes 7203,6758  # different stocks than the watchlist
+uv run jquantster sync --market-days 5    # all stocks for the latest 5 trading days (default 2)
+uv run jquantster status                  # row counts, last sync, dataset access
+uv run jquantster ui                      # dashboard on :8510 (extra flags go to Streamlit,
+                                          #   e.g. --server.port 8600)
 ```
 
 ## Plans and rate limits
 
-| Plan | Requests/min (used) | History | Delay | Investor flows |
-|---|---|---|---|---|
-| free | 5 (3) | 2 years | 12 weeks | – |
-| light | 60 (48) | 5 years | none | ✓ |
-| standard | 120 (96) | 10 years | none | ✓ |
-| premium | 500 (400) | 20 years | none | ✓ |
+| Plan | Price/month | Requests/min (used) | History | Delay | Investor flows |
+|---|---|---|---|---|---|
+| free | ¥0 | 5 (3) | 2 years | 12 weeks | – |
+| light | ¥1,650 | 60 (48) | 5 years | none | ✓ |
+| standard | ¥3,300 | 120 (96) | 10 years | none | ✓ |
+| premium | ¥16,500 | 500 (400) | 20 years | none | ✓ |
 
-The fetcher stays at 80% of the published limit, and at most limit − 2 on small plans. `/fins/*` also has its own 60/min cap.
+The fetcher uses 80% of the published limit, and at most limit − 2 on small plans. Free still
+returned a 429 at 4 requests a minute in practice.
 
-- The limit applies to the whole account, so every call is logged in SQLite. Separate
-  processes therefore share one budget.
-- A 429 response pauses all callers for 2 minutes. Repeated 429s get the account blocked for
-  about 5 minutes, which this avoids.
-- If the API returns 403 because a dataset isn't in your plan, the sync records that and
-  carries on with the next dataset.
+- **One budget per account.** Every call is logged in SQLite, so separate processes share the
+  same budget.
+- **Financial statements have their own cap.** `/fins/*` is limited to 60 requests a minute on
+  every plan, tracked separately.
+- **After a 429, everything pauses for 2 minutes.** The API sends no `Retry-After` header, and
+  repeated 429s get the account blocked for about 5 minutes.
+- **Datasets outside your plan are skipped.** When the API says your plan doesn't include a
+  dataset, the sync records that (see `jquantster status`) and carries on.
+- **Free history counts back from the delay.** On Free, the 2 years end at the 12-week cutoff:
+  run on 2026-10-07, it covers 2024-07-15 to 2026-07-15.
 
-A first sync on the Free plan with a 5-stock watchlist makes about 20 calls, which takes
-around 5 minutes.
+A first sync on Free with a 5-stock watchlist makes about 15 calls and takes about 5 minutes.
+Later syncs are shorter.
 
 ## How it fetches
 
-- **Watchlist**: one request per stock returns its whole history (`code` + `from`/`to`).
-- **Market snapshot**: one request per trading day returns every stock (`date`).
-- **Investor types**: one ranged request. Each run re-reads the last 3 weeks, because JPX
-  re-issues corrected weeks with a new `PubDate`. Every version is kept, and the dashboard
-  reads the latest one (`investor_types_latest` view).
-- **Incremental**: each job resumes from the newest date already stored.
+| Data | Calls |
+|---|---|
+| Watchlist prices and results | One request per stock returns its whole history |
+| Market snapshot | One request per trading day returns every stock |
+| Investor flows | One request for the whole range. Each sync re-reads the last 3 weeks, because JPX re-issues corrected weeks with a new publish date. |
+| Calendar, stock list | One request each |
+
+Each job resumes from what's already stored, and fills older gaps when the plan window moves.
+
+### Scheduling
+
+J-Quants publishes daily prices around 16:30 JST and the investor-type breakdown around 16:30
+JST on the 4th business day after each week. On a paid plan, a weekday sync after 18:30 JST
+picks up the day. That's 16:30 in Jakarta (UTC+7):
+
+```cron
+30 16 * * 1-5  cd ~/Projects/jquantster && ./run.sh --sync-only >> data/sync.log 2>&1
+```
+
+On Free the data is 12 weeks old anyway, so once a day at any time is plenty.
+
+## Data and storage
+
+Everything lives in one SQLite file (`data/`, git-ignored):
+
+| Table | Contents |
+|---|---|
+| `daily_bars` | Daily OHLC, volume, turnover, raw and split-adjusted |
+| `issues` | Listed stocks: names, market, sector |
+| `fins_summary` | Earnings summaries, full API record kept as JSON |
+| `investor_types` | Weekly flows, every published version (`investor_types_latest` view = newest) |
+| `calendar` | TSE trading days |
+| `sync_log`, `entitlements`, `api_calls`, `meta` | Sync history, dataset access, rate-limit log |
+
+Notes:
+- Adjusted prices are recalculated by JPX after every new split, so old adjusted values change.
+  Raw prices plus `adj_factor` are stored as well.
+- Investor-type values are shown in ¥bn, on the assumption that J-Quants reports them in
+  thousand yen, as JPX publishes them.
+- J-Quants data is for your own use under its terms. Don't commit or publish the database.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `Auth error: The incoming api key is invalid or expired` | Re-copy the key from the J-Quants dashboard into `.env`. |
+| `investor_types not_in_plan` / `not_entitled` | That dataset needs a higher plan. Set `JQUANTS_PLAN` once you've upgraded. |
+| `400 … Your subscription covers the following dates` | `JQUANTS_PLAN` doesn't match your real plan. |
+| Market tab says it needs two trading days | Run `uv run jquantster sync --market-days 2`. |
+| Port 8510 in use | Run `uv run jquantster ui --server.port 8600`. |
+| Lots of `rate limit: waiting …` lines | Normal, especially on Free (3 calls a minute). |
+
+## Project layout
+
+```
+run.sh                  one-step install / sync / dashboard
+src/jquantster/
+  config.py             plans, limits, .env loading
+  client.py             HTTP client + SQLite-backed rate limiter
+  sync.py               one job per dataset, incremental
+  db.py                 schema and upserts
+  cli.py                `jquantster sync | status | ui`
+  app.py                Streamlit dashboard
+tests/                  run against a fake API, no key needed
+```
 
 ## Development
 
 ```bash
-uv run pytest   # runs against a fake API; no key needed
+uv sync
+uv run pytest
 ```
