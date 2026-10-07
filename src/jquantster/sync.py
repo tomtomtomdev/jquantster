@@ -9,6 +9,8 @@ Strategy:
 
 from __future__ import annotations
 
+import csv
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -19,7 +21,7 @@ from . import db
 from .client import AuthError, JQuantsClient, JQuantsError, NotEntitled
 from .config import Settings
 from .db import code5 as _code5
-from .edinet import EdinetClient
+from .edinet import EdinetClient, NotFound, parse_holdings
 
 TSE_OPEN = ("1", "2")  # HolDiv: business day, half-day session
 EDINET_REREAD_DAYS = 3  # late filings and withdrawals show up on days already read
@@ -196,12 +198,17 @@ class Syncer:
             return db.upsert_investor_types(self.conn, rows), f"from {start}"
         return self._run("investor types", "investor_types", fn)
 
+    def _edinet_skip(self, job: str) -> JobResult | None:
+        if self.edinet is not None:
+            return None
+        self.log(f"· {job}: skipped ({EDINET_NO_KEY})")
+        db.set_entitlement(self.conn, "edinet", "no_key", EDINET_NO_KEY)
+        return JobResult(job, "skipped", message=EDINET_NO_KEY)
+
     def edinet_filings(self) -> JobResult:
         job, dataset = "edinet filings", "edinet"
-        if self.edinet is None:
-            self.log(f"· {job}: skipped ({EDINET_NO_KEY})")
-            db.set_entitlement(self.conn, dataset, "no_key", EDINET_NO_KEY)
-            return JobResult(job, "skipped", message=EDINET_NO_KEY)
+        if skipped := self._edinet_skip(job):
+            return skipped
 
         def fn():
             days = self.edinet_days()
@@ -212,6 +219,44 @@ class Syncer:
             span = f"{days[0]} → {days[-1]}" if days else "up to date"
             return total, f"{len(days)} days, {span}" if days else span
         return self._run(job, dataset, fn, client=self.edinet)
+
+    def edinet_holdings(self, codes: tuple[str, ...]) -> JobResult:
+        """Large-shareholding / change reports about watchlist companies. State is saved per
+        document, so an interrupted run carries on where it stopped."""
+        job = "edinet holdings"
+        if skipped := self._edinet_skip(job):
+            return skipped
+
+        def fn():
+            dropped = db.drop_withdrawn_holdings(self.conn)
+            todo = db.edinet_holding_docs_todo(self.conn, codes)
+            stored, bad = 0, 0
+            for doc in todo:
+                try:
+                    files = self.edinet.download_csv(doc["doc_id"])
+                except NotFound as e:
+                    db.save_edinet_holding(self.conn, doc, None, "not_found", str(e))
+                    bad += 1
+                    continue
+                except (zipfile.BadZipFile, UnicodeError, csv.Error) as e:
+                    db.save_edinet_holding(self.conn, doc, None, "unparseable", str(e))
+                    bad += 1
+                    continue
+                figures = parse_holdings(files)
+                if figures is None:
+                    db.save_edinet_holding(self.conn, doc, None, "unparseable",
+                                           "no holding ratio in the CSV")
+                    bad += 1
+                else:
+                    db.save_edinet_holding(self.conn, doc, figures, "ok")
+                    stored += 1
+            notes = [f"{len(todo)} new reports" if todo else "up to date"]
+            if bad:
+                notes.append(f"{bad} unparseable or missing")
+            if dropped:
+                notes.append(f"{dropped} withdrawn removed")
+            return stored, ", ".join(notes)
+        return self._run(job, "edinet", fn, client=self.edinet)
 
     def run_all(self, codes: tuple[str, ...], market_days: int) -> list[JobResult]:
         db.set_meta(self.conn, "plan", self.s.plan.name)
@@ -224,6 +269,7 @@ class Syncer:
             self.market_bars(market_days) if market_days > 0 else None,
             self.investor_types(),
             self.edinet_filings(),
+            self.edinet_holdings(codes),
         ]
         db.set_meta(self.conn, "last_sync", datetime.now().isoformat(timespec="seconds"))
         return [r for r in results if r]

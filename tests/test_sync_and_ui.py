@@ -27,8 +27,9 @@ def run_sync(tmp_path, plan, entitled, market_days=2):
 def test_free_plan_sync(tmp_path):
     conn, client, res = run_sync(tmp_path, "free", {"calendar", "master", "bars", "fins"})
     assert res["investor types"].status == "skipped"
-    assert res["edinet filings"].status == "skipped"  # no EDINET key
-    assert all(r.status == "ok" for j, r in res.items() if j not in ("investor types", "edinet filings"))
+    edinet = ("edinet filings", "edinet holdings")
+    assert all(res[j].status == "skipped" for j in edinet)  # no EDINET key
+    assert all(r.status == "ok" for j, r in res.items() if j not in ("investor types", *edinet))
     # free plan: nothing newer than 12 weeks ago
     newest = conn.execute("SELECT MAX(date) FROM daily_bars").fetchone()[0]
     assert newest <= PLANS["free"].window(TODAY)[1].isoformat()

@@ -39,11 +39,13 @@ Each slice: write failing tests first (extend `tests/` with a fake EDINET transp
   (re-reading the last 3 days) or `today - EDINET_HISTORY_DAYS`, up to today. Skipped with a
   clear message when no EDINET key is set. `status` shows the count. Wired into `run_all`
   and the CLI call estimate.
-- [ ] **3. Large shareholdings.** Job `edinet holdings`: for 350/360 docs whose issuer maps to a
+- [x] **3. Large shareholdings.** Job `edinet holdings`: for 350/360 docs whose issuer maps to a
   watchlist code, not withdrawn, `csvFlag` = 1 and not yet parsed, download the CSV and store
   holder, holding ratio, previous ratio when present, shares held, reporting obligation date into
   `edinet_holdings`. Only parse what's needed; keep unparseable docs marked so they aren't
-  refetched.
+  refetched. (Done: parse state per doc in `edinet_parsed`; ratios stored as percent — XBRL
+  fractions ≤ 1 are ×100 unless the value/unit says percent; joint-holder reports use the
+  member-less context, else a "Total" member, else the first.)
 - [ ] **4. Financial statements.** Job `edinet financials`: for 120/130/160 docs of watchlist
   companies, download the CSV and extract consolidated (fallback non-consolidated) current-period
   values for total assets, net assets / equity, cash and equivalents, operating / investing /

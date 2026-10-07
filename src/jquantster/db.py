@@ -74,6 +74,19 @@ CREATE VIEW IF NOT EXISTS edinet_codes AS
         FROM edinet_docs
         WHERE edinet_code IS NOT NULL AND sec_code IS NOT NULL AND sec_code != '')
     WHERE rn = 1;
+-- Per-document parse state for jobs that download EDINET CSVs, so finished, unparseable
+-- (status 'unparseable') and missing ('not_found') documents aren't downloaded again.
+CREATE TABLE IF NOT EXISTS edinet_parsed (
+    doc_id TEXT NOT NULL, job TEXT NOT NULL, status TEXT NOT NULL, message TEXT,
+    parsed_at TEXT NOT NULL, PRIMARY KEY (doc_id, job)
+);
+-- Large-shareholding (350) and change (360) reports. Ratios are percent (5.12 = 5.12%).
+CREATE TABLE IF NOT EXISTS edinet_holdings (
+    doc_id TEXT PRIMARY KEY, code TEXT NOT NULL, holder TEXT, submit_date TEXT,
+    holding_ratio REAL, prev_holding_ratio REAL, shares_held REAL, obligation_date TEXT,
+    doc_type_code TEXT
+);
+CREATE INDEX IF NOT EXISTS edinet_holdings_code ON edinet_holdings (code, submit_date);
 """
 
 EDINET_DOC_COLS = {
@@ -191,6 +204,53 @@ def edinet_codes_for(conn, codes) -> dict[str, str]:
             f"SELECT sec_code, edinet_code FROM edinet_codes "
             f"WHERE sec_code IN ({', '.join('?' * len(wanted))})", wanted)
     }
+
+
+WITHDRAWN = ("1", "2")  # withdrawalStatus: 1 withdrawal notice, 2 withdrawn document
+
+
+def edinet_holding_docs_todo(conn, codes) -> list:
+    """350/360 reports about watchlist companies with a CSV, not withdrawn, not yet parsed;
+    oldest first. Rows carry the issuer's 5-digit `code`."""
+    wanted = [code5(c) for c in codes]
+    if not wanted:
+        return []
+    return conn.execute(
+        f"""SELECT d.*, c.sec_code AS code FROM edinet_docs d
+            JOIN edinet_codes c ON c.edinet_code = d.issuer_edinet_code
+            WHERE d.doc_type_code IN ('350', '360') AND d.csv_flag = '1'
+              AND COALESCE(d.withdrawal_status, '0') NOT IN ({", ".join("?" * len(WITHDRAWN))})
+              AND c.sec_code IN ({", ".join("?" * len(wanted))})
+              AND NOT EXISTS (SELECT 1 FROM edinet_parsed p
+                              WHERE p.doc_id = d.doc_id AND p.job = 'holdings')
+            ORDER BY d.submit_datetime, d.doc_id""",
+        (*WITHDRAWN, *wanted)).fetchall()
+
+
+def save_edinet_holding(conn, doc, figures: dict | None, status: str, message: str = "") -> None:
+    """Store one report's figures (when parsed) and its parse state in one transaction."""
+    conn.execute("BEGIN")
+    try:
+        if figures is not None:
+            conn.execute(
+                "INSERT OR REPLACE INTO edinet_holdings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (doc["doc_id"], doc["code"], doc["filer_name"], doc["submit_date"],
+                 figures["holding_ratio"], figures["prev_holding_ratio"],
+                 figures["shares_held"], figures["obligation_date"], doc["doc_type_code"]))
+        conn.execute(
+            "INSERT OR REPLACE INTO edinet_parsed VALUES (?, 'holdings', ?, ?, datetime('now'))",
+            (doc["doc_id"], status, message))
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def drop_withdrawn_holdings(conn) -> int:
+    """Reports withdrawn after they were parsed."""
+    return conn.execute(
+        f"DELETE FROM edinet_holdings WHERE doc_id IN (SELECT doc_id FROM edinet_docs "
+        f"WHERE withdrawal_status IN ({', '.join('?' * len(WITHDRAWN))}))", WITHDRAWN).rowcount
 
 
 def set_entitlement(conn, dataset: str, status: str, message: str = "") -> None:

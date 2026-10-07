@@ -26,18 +26,20 @@ def _sync(args, settings) -> int:
     conn = db.connect(settings.db_path)
     estimate = 2 + 2 * len(codes) + args.market_days * 2 + 1
     minutes = estimate / plan.budget_rpm
-    edinet_days = 0
+    edinet_calls = 0
     if settings.edinet_api_key:
         today = date.today()
         first = edinet_start(conn, settings, today)
-        edinet_days = sum((first + timedelta(i)).weekday() < 5 for i in range((today - first).days + 1))
-        minutes += edinet_days / EDINET_RPM
+        edinet_calls = sum((first + timedelta(i)).weekday() < 5 for i in range((today - first).days + 1))
+        # holdings reports already listed but not downloaded (new ones found today add more)
+        edinet_calls += len(db.edinet_holding_docs_todo(conn, codes))
+        minutes += edinet_calls / EDINET_RPM
     print(f"Plan {plan.name}: {plan.rpm} req/min published, using {plan.budget_rpm}. "
           f"Readable window {start} → {end}.")
     print(f"Watchlist: {', '.join(codes) or '(none)'}; market snapshot: {args.market_days} day(s); "
-          + (f"EDINET: {edinet_days} day(s)." if settings.edinet_api_key
+          + (f"EDINET: about {edinet_calls} call(s)." if settings.edinet_api_key
              else "EDINET: off (set EDINET_API_KEY)."))
-    print(f"About {estimate + edinet_days} calls ≈ {minutes:.1f} min at most "
+    print(f"About {estimate + edinet_calls} calls ≈ {minutes:.1f} min at most "
           "(less on later runs; data already stored is skipped).\n")
 
     limiter = RateLimiter(conn, on_wait=lambda s: print(f"  … rate limit: waiting {s:.0f}s", flush=True))
@@ -55,7 +57,7 @@ def _sync(args, settings) -> int:
 def _status(settings) -> int:
     conn = db.connect(settings.db_path)
     for table in ("issues", "daily_bars", "fins_summary", "investor_types", "calendar",
-                  "edinet_docs"):
+                  "edinet_docs", "edinet_holdings"):
         print(f"{table:16} {conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]:>9,}")
     print(f"last sync        {db.get_meta(conn, 'last_sync', 'never')}")
     for r in conn.execute("SELECT * FROM entitlements ORDER BY dataset"):

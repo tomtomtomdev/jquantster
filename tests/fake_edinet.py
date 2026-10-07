@@ -34,6 +34,55 @@ CSV_FILES = {
     "jpaud-aar-cn-001_E02144-000_2026-03-31_01_2026-06-20.csv": [HEADER],
 }
 
+# Large-shareholding reports (jplvh taxonomy). A joint-holder report carries the summary for
+# all holders in the member-less context and each holder's figures in a member context.
+# Ratios are XBRL percentItemType (pure unit): fractions, 0.0512 = 5.12%.
+LVH_350 = "jplvh010000-lvh-001_E11111-000_2026-10-02_01_2026-10-02.csv"
+LVH_360 = "jplvh020000-lvh-001_E11111-000_2026-10-05_01_2026-10-05.csv"
+
+
+def lvh(elem, name, ctx, value, unit="－", unit_name="－"):
+    return [elem, name, ctx, "提出日時点", "その他", "時点", unit, unit_name, value]
+
+
+HOLDINGS_350 = {LVH_350: [
+    HEADER,
+    lvh("jpdei_cor:EDINETCodeDEI", "EDINETコード、DEI", "FilingDateInstant", "E11111"),
+    lvh("jplvh_cor:NameOfIssuer", "発行者の名称", "FilingDateInstant", "トヨタ自動車株式会社"),
+    lvh("jplvh_cor:SecurityCodeOfIssuer", "証券コード", "FilingDateInstant", "7203"),
+    lvh("jplvh_cor:DateWhenFilingRequirementWasTriggered", "報告義務発生日",
+        "FilingDateInstant", "2026-09-28"),
+    # each holder first (members), then the joint total (no member)
+    lvh("jplvh_cor:TotalNumberOfStocksEtcHeld", "保有株券等の数（総数）",
+        "FilingDateInstant_FilerLargeVolumeHolder1Member", "300000000", "shares", "株"),
+    lvh("jplvh_cor:HoldingRatioOfShareCertificatesEtc", "株券等保有割合",
+        "FilingDateInstant_FilerLargeVolumeHolder1Member", "0.0300", "pure", "－"),
+    lvh("jplvh_cor:TotalNumberOfStocksEtcHeld", "保有株券等の数（総数）",
+        "FilingDateInstant_JointHolder1Member", "212000000", "shares", "株"),
+    lvh("jplvh_cor:HoldingRatioOfShareCertificatesEtc", "株券等保有割合",
+        "FilingDateInstant_JointHolder1Member", "0.0212", "pure", "－"),
+    lvh("jplvh_cor:TotalNumberOfStocksEtcHeld", "保有株券等の数（総数）",
+        "FilingDateInstant", "512000000", "shares", "株"),
+    lvh("jplvh_cor:HoldingRatioOfShareCertificatesEtc", "株券等保有割合",
+        "FilingDateInstant", "0.0512", "pure", "－"),
+]}
+# Single-holder change report, element IDs and values quoted as some exports do.
+HOLDINGS_360 = {LVH_360: [
+    HEADER,
+    lvh('"jplvh_cor:DateWhenFilingRequirementWasTriggered"', "報告義務発生日",
+        "FilingDateInstant", '"2026-09-30"'),
+    lvh('"jplvh_cor:TotalNumberOfStocksEtcHeld"', "保有株券等の数（総数）",
+        "FilingDateInstant", '"605,000,000"', "shares", "株"),
+    lvh('"jplvh_cor:HoldingRatioOfShareCertificatesEtc"', "株券等保有割合",
+        "FilingDateInstant", '"0.0605"', "pure", "－"),
+    lvh('"jplvh_cor:HoldingRatioOfShareCertificatesEtcPerLastReport"', "直前の報告書に記載された株券等保有割合",
+        "FilingDateInstant", '"0.0512"', "pure", "－"),
+]}
+# A report with no holding figures we know (e.g. a different taxonomy version).
+HOLDINGS_UNKNOWN = {"jplvh010000-lvh-001_E22222-000_2026-10-02_01_2026-10-02.csv": [
+    HEADER, lvh("jplvh_cor:NameOfIssuer", "発行者の名称", "FilingDateInstant", "トヨタ自動車株式会社"),
+]}
+
 DOC = {"seqNumber": 1, "docID": "S100ABCD", "edinetCode": "E02144", "secCode": "72030",
        "filerName": "トヨタ自動車株式会社", "docTypeCode": "120", "issuerEdinetCode": None,
        "subjectEdinetCode": None, "submitDateTime": "2026-06-20 09:00",
@@ -58,6 +107,9 @@ class FakeEdinet:
         self.dates: list[str] = []  # dates asked of documents.json
         self.fail_5xx = 0  # respond 503 to this many calls first
         self.bad_status = None  # metadata.status to send instead of "200"
+        # doc_id -> CSV files served by /documents/{id}?type=5; others are a 404
+        self.csvs: dict[str, dict] = {"S100ABCD": CSV_FILES}
+        self.fail_docs: set[str] = set()  # downloads that always answer 503
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         self.calls.append(req)
@@ -83,8 +135,11 @@ class FakeEdinet:
                     day = p["date"]
                     body["results"] = self.docs.get(day, [filing(f"S1F{day}", day)])
             return httpx.Response(200, json=body)
-        if path == "/documents/S100ABCD" and p.get("type") == "5":
-            return httpx.Response(200, content=csv_zip(CSV_FILES),
+        doc_id = path.removeprefix("/documents/")
+        if doc_id in self.fail_docs:
+            return httpx.Response(503, text="Service Unavailable")
+        if doc_id in self.csvs and p.get("type") == "5":
+            return httpx.Response(200, content=csv_zip(self.csvs[doc_id]),
                                   headers={"content-type": "application/octet-stream"})
         if path.startswith("/documents/"):
             return httpx.Response(200, json={"metadata": {"title": "", "status": "404",
