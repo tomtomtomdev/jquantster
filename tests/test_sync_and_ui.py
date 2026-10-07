@@ -27,7 +27,7 @@ def run_sync(tmp_path, plan, entitled, market_days=2):
 def test_free_plan_sync(tmp_path):
     conn, client, res = run_sync(tmp_path, "free", {"calendar", "master", "bars", "fins"})
     assert res["investor types"].status == "skipped"
-    edinet = ("edinet filings", "edinet holdings")
+    edinet = ("edinet filings", "edinet holdings", "edinet financials")
     assert all(res[j].status == "skipped" for j in edinet)  # no EDINET key
     assert all(r.status == "ok" for j, r in res.items() if j not in ("investor types", *edinet))
     # free plan: nothing newer than 12 weeks ago

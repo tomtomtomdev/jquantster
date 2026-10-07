@@ -151,6 +151,83 @@ def parse_holdings(files: dict[str, list[dict]]) -> dict | None:
     return out if out["holding_ratio"] is not None else None
 
 
+# Financial statements: canonical item -> element IDs, best first. Statements (jppfs_cor =
+# J-GAAP, jpigp_cor = IFRS) come before the summary of business results (jpcrp_cor), which is
+# only a fallback. Extend by adding IDs; a consolidated figure always beats a non-consolidated
+# one whatever its position here.
+FIN_ELEMENTS: dict[str, tuple[str, ...]] = {
+    "total_assets": (
+        "jppfs_cor:Assets", "jpigp_cor:AssetsIFRS",
+        "jpcrp_cor:TotalAssetsSummaryOfBusinessResults",
+        "jpcrp_cor:TotalAssetsIFRSSummaryOfBusinessResults",
+    ),
+    # J-GAAP net assets (incl. non-controlling interests); IFRS total equity
+    "net_assets": (
+        "jppfs_cor:NetAssets", "jpigp_cor:EquityIFRS",
+        "jpcrp_cor:NetAssetsSummaryOfBusinessResults",
+        "jpcrp_cor:TotalEquityIFRSSummaryOfBusinessResults",
+    ),
+    # IFRS equity attributable to owners of the parent. J-GAAP has no such element; its
+    # shareholders' equity (株主資本) stands in, which leaves out accumulated OCI.
+    "equity_parent": (
+        "jpigp_cor:EquityAttributableToOwnersOfParentIFRS", "jppfs_cor:ShareholdersEquity",
+        "jpcrp_cor:EquityAttributableToOwnersOfParentIFRSSummaryOfBusinessResults",
+    ),
+    "cash": (
+        "jppfs_cor:CashAndCashEquivalents", "jpigp_cor:CashAndCashEquivalentsIFRS",
+        "jpcrp_cor:CashAndCashEquivalentsSummaryOfBusinessResults",
+        "jpcrp_cor:CashAndCashEquivalentsIFRSSummaryOfBusinessResults",
+    ),
+    **{
+        f"cf_{kind.lower()}": (
+            f"jppfs_cor:NetCashProvidedByUsedIn{kind}Activities",
+            f"jpigp_cor:NetCashProvidedByUsedIn{kind}ActivitiesIFRS",
+            f"jpcrp_cor:NetCashProvidedByUsedIn{kind}ActivitiesSummaryOfBusinessResults",
+            f"jpcrp_cor:CashFlowsFromUsedIn{kind}ActivitiesIFRSSummaryOfBusinessResults",
+        ) for kind in ("Operating", "Investing", "Financing")
+    },
+}
+_FIN_RANK = {elem: (item, i) for item, elems in FIN_ELEMENTS.items()
+             for i, elem in enumerate(elems)}
+# Current-period contexts: annual, semiannual, quarterly (140).
+CURRENT_CONTEXTS = ("CurrentYearInstant", "CurrentYearDuration", "InterimInstant",
+                    "InterimDuration", "CurrentQuarterInstant", "CurrentYTDDuration")
+NON_CONSOLIDATED = "_NonConsolidatedMember"
+
+
+def parse_fins(files: dict[str, list[dict]]) -> dict[str, tuple[float, str]]:
+    """Current-period figures from an annual / semiannual / quarterly report's CSV files:
+    item -> (value, 'consolidated' | 'non_consolidated'). Consolidated wins, then the
+    element's position in FIN_ELEMENTS. Prior periods and member (segment, component)
+    contexts other than _NonConsolidatedMember are ignored."""
+    rows = [{_clean(k): _clean(v) for k, v in row.items() if k is not None}
+            for rs in files.values() for row in rs]
+    consolidated_dei = next(
+        (r.get("値", "").lower() for r in rows if r.get("要素ID", "")
+         == "jpdei_cor:WhetherConsolidatedFinancialStatementsArePreparedDEI"), "")
+    best: dict[str, tuple[tuple[int, int], float, str]] = {}
+    for row in rows:
+        hit = _FIN_RANK.get(row.get("要素ID", ""))
+        if hit is None or row.get("値", "") in _NIL:
+            continue
+        ctx, rel = row.get("コンテキストID", ""), row.get("相対年度", "")
+        base, _, rest = ctx.partition("_")
+        if base not in CURRENT_CONTEXTS or rest not in ("", NON_CONSOLIDATED[1:]):
+            continue
+        if rel.startswith("前") or "Prior" in rel:
+            continue
+        non_con = bool(rest) or row.get("連結・個別") == "個別" or consolidated_dei == "false"
+        try:
+            value = float(row["値"].replace(",", ""))
+        except ValueError:
+            continue
+        item, elem_rank = hit
+        rank = (int(non_con), elem_rank)
+        if item not in best or rank < best[item][0]:
+            best[item] = (rank, value, "non_consolidated" if non_con else "consolidated")
+    return {item: (value, basis) for item, (_, value, basis) in best.items()}
+
+
 def _message(resp: httpx.Response) -> str:
     try:
         return str(resp.json().get("message", ""))

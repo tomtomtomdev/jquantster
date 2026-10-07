@@ -21,7 +21,7 @@ from . import db
 from .client import AuthError, JQuantsClient, JQuantsError, NotEntitled
 from .config import Settings
 from .db import code5 as _code5
-from .edinet import EdinetClient, NotFound, parse_holdings
+from .edinet import EdinetClient, NotFound, parse_fins, parse_holdings
 
 TSE_OPEN = ("1", "2")  # HolDiv: business day, half-day session
 EDINET_REREAD_DAYS = 3  # late filings and withdrawals show up on days already read
@@ -258,6 +258,44 @@ class Syncer:
             return stored, ", ".join(notes)
         return self._run(job, "edinet", fn, client=self.edinet)
 
+    def edinet_financials(self, codes: tuple[str, ...]) -> JobResult:
+        """Balance-sheet / cash-flow figures from watchlist companies' own annual, quarterly
+        and semiannual reports (and amendments). State is saved per document."""
+        job = "edinet financials"
+        if skipped := self._edinet_skip(job):
+            return skipped
+
+        def fn():
+            dropped = db.drop_withdrawn_fins(self.conn)
+            todo = db.edinet_fins_docs_todo(self.conn, codes)
+            stored, bad = 0, 0
+            for doc in todo:
+                try:
+                    files = self.edinet.download_csv(doc["doc_id"])
+                except NotFound as e:
+                    db.save_edinet_fins(self.conn, doc, None, "not_found", str(e))
+                    bad += 1
+                    continue
+                except (zipfile.BadZipFile, UnicodeError, csv.Error) as e:
+                    db.save_edinet_fins(self.conn, doc, None, "unparseable", str(e))
+                    bad += 1
+                    continue
+                figures = parse_fins(files)
+                if not figures:
+                    db.save_edinet_fins(self.conn, doc, None, "unparseable",
+                                        "no balance-sheet or cash-flow figures in the CSV")
+                    bad += 1
+                else:
+                    db.save_edinet_fins(self.conn, doc, figures, "ok")
+                    stored += 1
+            notes = [f"{len(todo)} new reports" if todo else "up to date"]
+            if bad:
+                notes.append(f"{bad} unparseable or missing")
+            if dropped:
+                notes.append(f"{dropped} withdrawn removed")
+            return stored, ", ".join(notes)
+        return self._run(job, "edinet", fn, client=self.edinet)
+
     def run_all(self, codes: tuple[str, ...], market_days: int) -> list[JobResult]:
         db.set_meta(self.conn, "plan", self.s.plan.name)
         db.set_meta(self.conn, "window", f"{self.start}..{self.end}")
@@ -270,6 +308,7 @@ class Syncer:
             self.investor_types(),
             self.edinet_filings(),
             self.edinet_holdings(codes),
+            self.edinet_financials(codes),
         ]
         db.set_meta(self.conn, "last_sync", datetime.now().isoformat(timespec="seconds"))
         return [r for r in results if r]

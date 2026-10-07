@@ -87,6 +87,21 @@ CREATE TABLE IF NOT EXISTS edinet_holdings (
     doc_type_code TEXT
 );
 CREATE INDEX IF NOT EXISTS edinet_holdings_code ON edinet_holdings (code, submit_date);
+-- Balance-sheet / cash-flow figures from annual (120), amended (130), quarterly (140) and
+-- semiannual (160) reports, one row per item. Amendments are kept beside the original.
+CREATE TABLE IF NOT EXISTS edinet_fins (
+    code TEXT NOT NULL, doc_id TEXT NOT NULL, period_end TEXT, doc_type_code TEXT,
+    item TEXT NOT NULL, value REAL, basis TEXT, PRIMARY KEY (doc_id, item)
+);
+CREATE INDEX IF NOT EXISTS edinet_fins_code ON edinet_fins (code, period_end);
+-- The latest submitted figure per company, period and item: an amendment supersedes.
+CREATE VIEW IF NOT EXISTS edinet_fins_latest AS
+    SELECT code, doc_id, period_end, doc_type_code, item, value, basis, submit_date FROM (
+        SELECT f.*, d.submit_date, ROW_NUMBER() OVER (
+            PARTITION BY f.code, f.period_end, f.item
+            ORDER BY d.submit_datetime DESC, f.doc_id DESC) AS rn
+        FROM edinet_fins f JOIN edinet_docs d USING (doc_id))
+    WHERE rn = 1;
 """
 
 EDINET_DOC_COLS = {
@@ -251,6 +266,58 @@ def drop_withdrawn_holdings(conn) -> int:
     return conn.execute(
         f"DELETE FROM edinet_holdings WHERE doc_id IN (SELECT doc_id FROM edinet_docs "
         f"WHERE withdrawal_status IN ({', '.join('?' * len(WITHDRAWN))}))", WITHDRAWN).rowcount
+
+
+FIN_DOC_TYPES = ("120", "130", "140", "160")
+
+
+def edinet_fins_docs_todo(conn, codes) -> list:
+    """Annual / amended / quarterly / semiannual reports filed by watchlist companies, with a
+    CSV, not withdrawn, not yet parsed; oldest first. Rows carry the filer's 5-digit `code`."""
+    wanted = [code5(c) for c in codes]
+    if not wanted:
+        return []
+    return conn.execute(
+        f"""SELECT d.*, c.sec_code AS code FROM edinet_docs d
+            JOIN edinet_codes c ON c.edinet_code = d.edinet_code
+            WHERE d.doc_type_code IN ({", ".join("?" * len(FIN_DOC_TYPES))}) AND d.csv_flag = '1'
+              AND COALESCE(d.withdrawal_status, '0') NOT IN ({", ".join("?" * len(WITHDRAWN))})
+              AND c.sec_code IN ({", ".join("?" * len(wanted))})
+              AND NOT EXISTS (SELECT 1 FROM edinet_parsed p
+                              WHERE p.doc_id = d.doc_id AND p.job = 'financials')
+            ORDER BY d.submit_datetime, d.doc_id""",
+        (*FIN_DOC_TYPES, *WITHDRAWN, *wanted)).fetchall()
+
+
+def save_edinet_fins(conn, doc, figures: dict | None, status: str, message: str = "") -> None:
+    """Store one report's figures (item -> (value, basis)) and its parse state in one
+    transaction."""
+    conn.execute("BEGIN")
+    try:
+        conn.execute("DELETE FROM edinet_fins WHERE doc_id = ?", (doc["doc_id"],))
+        conn.executemany(
+            "INSERT INTO edinet_fins VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(doc["code"], doc["doc_id"], doc["period_end"], doc["doc_type_code"],
+              item, value, basis) for item, (value, basis) in (figures or {}).items()])
+        conn.execute(
+            "INSERT OR REPLACE INTO edinet_parsed VALUES (?, 'financials', ?, ?, datetime('now'))",
+            (doc["doc_id"], status, message))
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def drop_withdrawn_fins(conn) -> int:
+    """Reports withdrawn after they were parsed; returns the number of documents dropped."""
+    marks = ", ".join("?" * len(WITHDRAWN))
+    docs = conn.execute(
+        f"SELECT COUNT(DISTINCT doc_id) FROM edinet_fins WHERE doc_id IN (SELECT doc_id "
+        f"FROM edinet_docs WHERE withdrawal_status IN ({marks}))", WITHDRAWN).fetchone()[0]
+    conn.execute(
+        f"DELETE FROM edinet_fins WHERE doc_id IN (SELECT doc_id FROM edinet_docs "
+        f"WHERE withdrawal_status IN ({marks}))", WITHDRAWN)
+    return docs
 
 
 def set_entitlement(conn, dataset: str, status: str, message: str = "") -> None:

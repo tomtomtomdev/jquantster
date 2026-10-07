@@ -31,8 +31,10 @@ def _sync(args, settings) -> int:
         today = date.today()
         first = edinet_start(conn, settings, today)
         edinet_calls = sum((first + timedelta(i)).weekday() < 5 for i in range((today - first).days + 1))
-        # holdings reports already listed but not downloaded (new ones found today add more)
+        # holdings and financial reports already listed but not downloaded (new ones found
+        # today add more)
         edinet_calls += len(db.edinet_holding_docs_todo(conn, codes))
+        edinet_calls += len(db.edinet_fins_docs_todo(conn, codes))
         minutes += edinet_calls / EDINET_RPM
     print(f"Plan {plan.name}: {plan.rpm} req/min published, using {plan.budget_rpm}. "
           f"Readable window {start} → {end}.")
@@ -57,7 +59,7 @@ def _sync(args, settings) -> int:
 def _status(settings) -> int:
     conn = db.connect(settings.db_path)
     for table in ("issues", "daily_bars", "fins_summary", "investor_types", "calendar",
-                  "edinet_docs", "edinet_holdings"):
+                  "edinet_docs", "edinet_holdings", "edinet_fins"):
         print(f"{table:16} {conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]:>9,}")
     print(f"last sync        {db.get_meta(conn, 'last_sync', 'never')}")
     for r in conn.execute("SELECT * FROM entitlements ORDER BY dataset"):

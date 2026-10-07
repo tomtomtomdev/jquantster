@@ -83,6 +83,90 @@ HOLDINGS_UNKNOWN = {"jplvh010000-lvh-001_E22222-000_2026-10-02_01_2026-10-02.csv
     HEADER, lvh("jplvh_cor:NameOfIssuer", "発行者の名称", "FilingDateInstant", "トヨタ自動車株式会社"),
 ]}
 
+# Financial statements (jppfs = J-GAAP, jpigp = IFRS, jpcrp = cover / summary of results).
+def fin(elem, ctx, rel, cons, value, name=""):
+    period = "期間" if "Duration" in ctx else "時点"
+    unit, unit_name = ("JPY", "円") if value.lstrip("-").isdigit() else ("－", "－")
+    return [elem, name, ctx, rel, cons, period, unit, unit_name, value]
+
+
+# J-GAAP annual report, consolidated with non-consolidated figures alongside, a prior year,
+# a segment member and the summary of business results (which the statements win over).
+FINS_JGAAP = {"jpcrp030000-asr-001_E02144-000_2026-03-31_01_2026-06-20.csv": [
+    HEADER,
+    fin("jpdei_cor:WhetherConsolidatedFinancialStatementsArePreparedDEI", "FilingDateInstant",
+        "提出日時点", "その他", "true"),
+    fin("jpcrp_cor:TotalAssetsSummaryOfBusinessResults", "CurrentYearInstant", "当期末", "連結",
+        "89999999999999", "総資産額"),
+    fin("jpcrp_cor:NetCashProvidedByUsedInFinancingActivitiesSummaryOfBusinessResults",
+        "CurrentYearDuration", "当期", "連結", "-1500000000000", "財務活動によるキャッシュ・フロー"),
+    fin("jpcrp_cor:NetCashProvidedByUsedInFinancingActivitiesSummaryOfBusinessResults",
+        "Prior1YearDuration", "前期", "連結", "-1400000000000"),
+    fin("jppfs_cor:Assets", "CurrentYearInstant_AutomotiveReportableSegmentMember", "当期末", "連結",
+        "70000000000000"),
+    fin("jppfs_cor:Assets", "Prior1YearInstant", "前期末", "連結", "80000000000000", "資産"),
+    fin("jppfs_cor:Assets", "CurrentYearInstant_NonConsolidatedMember", "当期末", "個別",
+        "20000000000000", "資産"),
+    fin("jppfs_cor:Assets", "CurrentYearInstant", "当期末", "連結", "90000000000000", "資産"),
+    fin("jppfs_cor:NetAssets", "CurrentYearInstant", "当期末", "連結", "35000000000000", "純資産"),
+    fin("jppfs_cor:ShareholdersEquity", "CurrentYearInstant", "当期末", "連結",
+        "33000000000000", "株主資本"),
+    fin("jppfs_cor:CashAndCashEquivalents", "CurrentYearInstant", "当期末", "連結",
+        "9000000000000", "現金及び現金同等物"),
+    fin("jppfs_cor:CashAndCashEquivalents", "Prior1YearInstant", "前期末", "連結", "8000000000000"),
+    fin("jppfs_cor:NetCashProvidedByUsedInOperatingActivities", "CurrentYearDuration", "当期",
+        "連結", "4200000000000"),
+    fin("jppfs_cor:NetCashProvidedByUsedInOperatingActivities",
+        "CurrentYearDuration_NonConsolidatedMember", "当期", "個別", "1000000000000"),
+    fin("jppfs_cor:NetCashProvidedByUsedInInvestingActivities", "CurrentYearDuration", "当期",
+        "連結", "-3100000000000"),
+    fin("jppfs_cor:NetCashProvidedByUsedInInvestingActivities", "Prior1YearDuration", "前期",
+        "連結", "-2900000000000"),
+]}
+# Amended annual report for the same period: corrects total assets only.
+FINS_JGAAP_AMENDED = {"jpcrp030000-asr-002_E02144-000_2026-03-31_02_2026-07-15.csv": [
+    HEADER,
+    fin("jppfs_cor:Assets", "CurrentYearInstant", "当期末", "連結", "91000000000000", "資産"),
+]}
+# IFRS semiannual report: interim contexts; the balance sheet compares with the prior year end.
+FINS_IFRS_SEMI = {"jpcrp040300-ssr-001_E02144-000_2026-09-30_01_2026-10-06.csv": [
+    HEADER,
+    fin("jpigp_cor:AssetsIFRS", "Prior1YearInstant", "前期末", "連結", "90000000000000"),
+    fin("jpigp_cor:AssetsIFRS", "InterimInstant", "中間期末", "連結", "92000000000000"),
+    fin("jpigp_cor:EquityIFRS", "InterimInstant", "中間期末", "連結", "36000000000000"),
+    fin("jpigp_cor:EquityAttributableToOwnersOfParentIFRS", "InterimInstant", "中間期末", "連結",
+        "34000000000000"),
+    fin("jpigp_cor:EquityAttributableToOwnersOfParentIFRS",
+        "InterimInstant_ShareCapitalIFRSMember", "中間期末", "連結", "397000000000"),
+    fin("jpigp_cor:CashAndCashEquivalentsIFRS", "InterimInstant", "中間期末", "連結",
+        "9500000000000"),
+    fin("jpigp_cor:NetCashProvidedByUsedInOperatingActivitiesIFRS", "InterimDuration", "中間期",
+        "連結", "2100000000000"),
+    fin("jpigp_cor:NetCashProvidedByUsedInOperatingActivitiesIFRS", "Prior1InterimDuration",
+        "前中間期", "連結", "1900000000000"),
+    fin("jpigp_cor:NetCashProvidedByUsedInInvestingActivitiesIFRS", "InterimDuration", "中間期",
+        "連結", "-1600000000000"),
+    fin("jpigp_cor:NetCashProvidedByUsedInFinancingActivitiesIFRS", "InterimDuration", "中間期",
+        "連結", "-400000000000"),
+]}
+# Company without subsidiaries: only non-consolidated statements, in plain contexts marked
+# 個別 or in _NonConsolidatedMember contexts.
+FINS_NONCON = {"jpcrp030000-asr-001_E33333-000_2026-03-31_01_2026-06-25.csv": [
+    HEADER,
+    fin("jpdei_cor:WhetherConsolidatedFinancialStatementsArePreparedDEI", "FilingDateInstant",
+        "提出日時点", "その他", "false"),
+    fin("jppfs_cor:Assets", "CurrentYearInstant", "当期末", "個別", "500000000000"),
+    fin("jppfs_cor:NetAssets", "CurrentYearInstant_NonConsolidatedMember", "当期末", "個別",
+        "200000000000"),
+    fin("jppfs_cor:NetAssets", "Prior1YearInstant_NonConsolidatedMember", "前期末", "個別",
+        "190000000000"),
+]}
+# A report with none of the figures we map.
+FINS_UNKNOWN = {"jpcrp030000-asr-001_E02144-000_2025-03-31_01_2025-06-20.csv": [
+    HEADER, fin("jpcrp_cor:CompanyNameCoverPage", "FilingDateInstant", "提出日時点", "その他",
+                "トヨタ自動車株式会社"),
+]}
+
 DOC = {"seqNumber": 1, "docID": "S100ABCD", "edinetCode": "E02144", "secCode": "72030",
        "filerName": "トヨタ自動車株式会社", "docTypeCode": "120", "issuerEdinetCode": None,
        "subjectEdinetCode": None, "submitDateTime": "2026-06-20 09:00",

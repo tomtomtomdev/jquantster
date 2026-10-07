@@ -117,7 +117,8 @@ def test_sec_code_mapping(tmp_path, conn):
 
 def test_run_all_includes_edinet_after_jquants(tmp_path, conn):
     results = syncer(tmp_path, conn, FakeEdinet(DOCS)).run_all(("7203",), 0)
-    assert [r.job for r in results][-2:] == ["edinet filings", "edinet holdings"]
+    assert [r.job for r in results][-3:] == ["edinet filings", "edinet holdings",
+                                              "edinet financials"]
     assert all(r.status == "ok" for r in results)
 
 

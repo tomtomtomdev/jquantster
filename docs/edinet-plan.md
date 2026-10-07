@@ -46,11 +46,18 @@ Each slice: write failing tests first (extend `tests/` with a fake EDINET transp
   refetched. (Done: parse state per doc in `edinet_parsed`; ratios stored as percent — XBRL
   fractions ≤ 1 are ×100 unless the value/unit says percent; joint-holder reports use the
   member-less context, else a "Total" member, else the first.)
-- [ ] **4. Financial statements.** Job `edinet financials`: for 120/130/160 docs of watchlist
+- [x] **4. Financial statements.** Job `edinet financials`: for 120/130/160 docs of watchlist
   companies, download the CSV and extract consolidated (fallback non-consolidated) current-period
   values for total assets, net assets / equity, cash and equivalents, operating / investing /
   financing cash flow, for both J-GAAP (`jppfs_cor`) and IFRS (`jpigp_cor`) element IDs, into
-  `edinet_fins` (code, doc_id, period_end, item, value).
+  `edinet_fins` (code, doc_id, period_end, item, value). (Done, 140 included: one dict
+  `FIN_ELEMENTS` maps items `total_assets`, `net_assets` (IFRS `EquityIFRS`), `equity_parent`
+  (J-GAAP `ShareholdersEquity` stands in, excluding accumulated OCI), `cash`, `cf_operating` /
+  `_investing` / `_financing` to element IDs, statements first, `jpcrp_cor`
+  …SummaryOfBusinessResults as fallback. Only CurrentYear/Interim/CurrentQuarter/CurrentYTD
+  contexts, bare or `_NonConsolidatedMember`; 相対年度 starting 前 is skipped. Consolidated wins;
+  `basis` records which. View `edinet_fins_latest` takes the latest submitted doc per code,
+  period and item, so a 130 amendment supersedes per item.)
 - [ ] **5. Dashboard.** Stock tab gets three sections below "Reported results": recent filings
   (date, type, description, link to the EDINET document page), large shareholders (latest ratio per
   holder, with a ratio-over-time chart), balance sheet and cash flow by period. Empty states
