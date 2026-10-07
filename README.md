@@ -26,12 +26,12 @@ uv run jquantster status
 
 | Plan | Requests/min (used) | History | Delay | Investor flows |
 |---|---|---|---|---|
-| free | 5 (4) | 2 years | 12 weeks | – |
+| free | 5 (3) | 2 years | 12 weeks | – |
 | light | 60 (48) | 5 years | none | ✓ |
 | standard | 120 (96) | 10 years | none | ✓ |
 | premium | 500 (400) | 20 years | none | ✓ |
 
-The fetcher stays at 80% of the published limit. `/fins/*` also has its own 60/min cap.
+The fetcher stays at 80% of the published limit, and at most limit − 2 on small plans. `/fins/*` also has its own 60/min cap.
 
 - The limit applies to the whole account, so every call is logged in SQLite. Separate
   processes therefore share one budget.

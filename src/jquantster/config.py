@@ -32,7 +32,8 @@ class Plan:
 
     @property
     def budget_rpm(self) -> int:
-        return max(1, int(self.rpm * SAFETY))
+        # Free (5/min) still drew a 429 at 4/min in practice, so small plans keep 2 spare.
+        return max(1, min(int(self.rpm * SAFETY), self.rpm - 2))
 
     @property
     def fins_budget_rpm(self) -> int:
@@ -40,9 +41,14 @@ class Plan:
 
     def window(self, today: date | None = None) -> tuple[date, date]:
         """First and last date this plan can read."""
+        # The API counts history back from the (delayed) end, e.g. Free on 2026-10-07
+        # covers 2024-07-15 ~ 2026-07-15.
         today = today or date.today()
         end = today - timedelta(days=self.delay_days)
-        start = today.replace(year=today.year - self.history_years) + timedelta(days=1)
+        try:
+            start = end.replace(year=end.year - self.history_years)
+        except ValueError:  # 29 February
+            start = end.replace(year=end.year - self.history_years, day=28)
         return start, end
 
 

@@ -69,7 +69,8 @@ class RateLimiter:
                 if len(rows) >= limit:
                     # The call that frees a slot is the one `limit` places back.
                     oldest_blocking = rows[len(rows) - limit][0]
-                    wait = max(wait, oldest_blocking + WINDOW - now + 0.25)
+                    # +2s slack for latency and clock skew against the server's window
+                    wait = max(wait, oldest_blocking + WINDOW - now + 2.0)
             if wait <= 0:
                 self.conn.executemany(
                     "INSERT INTO api_calls VALUES (?, ?)", [(now, b) for b, _ in buckets]

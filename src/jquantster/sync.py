@@ -85,7 +85,7 @@ class Syncer:
         def fn():
             rows = self.client.get_all("/markets/calendar", **{
                 "from": self.start.isoformat(),
-                "to": (self.end + timedelta(days=30)).isoformat(),
+                "to": self.end.isoformat(),  # dates past the plan window are a 400
             })
             return db.upsert_calendar(self.conn, rows), ""
         return self._run("calendar", "calendar", fn)
@@ -102,16 +102,22 @@ class Syncer:
         def fn():
             total = 0
             for code in codes:
-                last = self.conn.execute(
-                    "SELECT MAX(date) FROM daily_bars WHERE code = ?", (_code5(code),)
-                ).fetchone()[0]
-                start = date.fromisoformat(last) + timedelta(days=1) if last else self.start
-                if start > self.end:
-                    continue
-                rows = self.client.get_all("/equities/bars/daily", code=code, **{
-                    "from": start.isoformat(), "to": self.end.isoformat(),
-                })
-                total += db.upsert_bars(self.conn, rows)
+                first, last = self.conn.execute(
+                    "SELECT MIN(date), MAX(date) FROM daily_bars WHERE code = ?", (_code5(code),)
+                ).fetchone()
+                ranges = [(self.start, self.end)]
+                if last:
+                    first, last = date.fromisoformat(first), date.fromisoformat(last)
+                    ranges = [(last + timedelta(days=1), self.end)]
+                    if first - self.start > timedelta(days=7):  # window grew backwards
+                        ranges.append((self.start, first - timedelta(days=1)))
+                for start, end in ranges:
+                    if start > end:
+                        continue
+                    rows = self.client.get_all("/equities/bars/daily", code=code, **{
+                        "from": start.isoformat(), "to": end.isoformat(),
+                    })
+                    total += db.upsert_bars(self.conn, rows)
             return total, f"{len(codes)} codes"
         return self._run("watchlist bars", "bars", fn)
 
