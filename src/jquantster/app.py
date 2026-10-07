@@ -29,6 +29,8 @@ INVESTORS = {
     "InsCo": "Insurance cos", "Bank": "City & regional banks", "SecCo": "Securities cos",
     "OthFin": "Other financials", "OthCo": "Other cos",
 }
+MARKETS_EN = {"プライム": "Prime", "スタンダード": "Standard", "グロース": "Growth",
+              "TOKYO PRO MARKET": "Tokyo Pro", "その他": "Other"}
 SECTIONS = {
     "TSEPrime": "Prime", "TSEStandard": "Standard", "TSEGrowth": "Growth",
     "TSE1st": "1st Section (to 2022-04)", "TSE2nd": "2nd Section (to 2022-04)",
@@ -109,7 +111,7 @@ with tab_stock:
         c1.metric(f"Close {last.date:%Y-%m-%d}", f"¥{last.c:,.0f}",
                   f"{(last.adj_c / prev.adj_c - 1):+.2%} on the day")
         c2.metric(f"Return since {first.date:%Y-%m-%d}", f"{(last.adj_c / first.adj_c - 1):+.1%}")
-        c3.metric("Range (adjusted)", f"¥{bars.adj_l.min():,.0f} – ¥{bars.adj_h.max():,.0f}")
+        c3.metric("Low – high (adjusted)", f"¥{bars.adj_l.min():,.0f}–{bars.adj_h.max():,.0f}")
         c4.metric("Avg daily turnover, last 20 days", f"¥{bars.va.tail(20).mean() / 1e9:,.1f}bn")
 
         tooltip = [alt.Tooltip("date:T", title="Date"),
@@ -165,6 +167,7 @@ with tab_market:
             WHERE b.date = ? AND b.c IS NOT NULL AND p.adj_c > 0""", prev_day, day)
         m["code"] = m.code.str[:4]
         m[["name", "market", "sector"]] = m[["name", "market", "sector"]].fillna("")
+        m["market"] = m.market.replace(MARKETS_EN)
         breadth = (m.chg > 0).sum(), (m.chg < 0).sum()
         c1, c2, c3 = st.columns(3)
         c1.metric("Advancers / decliners", f"{breadth[0]:,} / {breadth[1]:,}")
@@ -175,14 +178,17 @@ with tab_market:
             "chg": st.column_config.NumberColumn("Change", format="percent"),
             "close": st.column_config.NumberColumn("Close (¥)", format="%,.0f"),
             "turnover": st.column_config.NumberColumn("Turnover (¥100m)", format="%,.1f"),
+            "name": st.column_config.TextColumn("name", width="medium"),
         }
         liquid = m[m.turnover >= 1]  # ≥ ¥100m traded, so thin stocks don't top the lists
-        short = ["code", "name", "chg", "close", "turnover"]
+        short = ["code", "name", "chg", "turnover"]
         left, right = st.columns(2)
         left.markdown("**Top gainers** (turnover ≥ ¥100m)")
-        left.dataframe(liquid.nlargest(15, "chg"), hide_index=True, column_config=cfg, column_order=short)
+        left.dataframe(liquid.nlargest(15, "chg"), hide_index=True, column_config=cfg, column_order=short,
+                       width="stretch")
         right.markdown("**Top decliners** (turnover ≥ ¥100m)")
-        right.dataframe(liquid.nsmallest(15, "chg"), hide_index=True, column_config=cfg, column_order=short)
+        right.dataframe(liquid.nsmallest(15, "chg"), hide_index=True, column_config=cfg, column_order=short,
+                       width="stretch")
         st.markdown("**Most traded**")
         st.dataframe(m.nlargest(20, "turnover"), hide_index=True, column_config=cfg, width="stretch",
                      column_order=["code", "name", "market", "sector", "chg", "close", "turnover"])

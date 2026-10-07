@@ -18,7 +18,7 @@ stores it in a local SQLite file, and shows it in a small Streamlit dashboard:
 uv sync
 cp .env.example .env   # paste your key, set JQUANTS_PLAN and JQUANTS_WATCHLIST
 uv run jquantster sync # fetch (safe to re-run; it only fetches what's new)
-uv run jquantster ui   # open the dashboard
+uv run jquantster ui   # open the dashboard at http://localhost:8510
 uv run jquantster status
 ```
 

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import time
+import urllib.request
+import webbrowser
 from pathlib import Path
 
 from . import db
@@ -64,8 +68,39 @@ def main(argv: list[str] | None = None) -> int:
         return _sync(args, settings)
     if args.cmd == "status":
         return _status(settings)
+    return _ui(extra)
+
+
+def _ui(extra: list[str]) -> int:
+    """Run the dashboard without Streamlit's first-run email prompt, then open it."""
     app = Path(__file__).with_name("app.py")
-    return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app), *extra])
+    flags = {"--server.port": "8510", "--server.headless": "true",
+             "--browser.gatherUsageStats": "false"}
+    for i, arg in enumerate(extra):  # flags given on the command line win
+        key, _, value = arg.partition("=")
+        if key in flags:
+            flags[key] = value or extra[i + 1]
+    given = {a.partition("=")[0] for a in extra}
+    port = flags["--server.port"]
+    args = [x for k, v in flags.items() if k not in given for x in (k, v)] + extra
+    proc = subprocess.Popen([sys.executable, "-m", "streamlit", "run", str(app), *args])
+    url = f"http://localhost:{port}"
+    for _ in range(40):
+        try:
+            urllib.request.urlopen(f"{url}/_stcore/health", timeout=1)
+            print(f"Dashboard: {url}")
+            if not os.getenv("JQUANTSTER_NO_BROWSER"):
+                webbrowser.open(url)
+            break
+        except OSError:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.5)
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        return 0
 
 
 if __name__ == "__main__":
