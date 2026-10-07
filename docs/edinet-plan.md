@@ -66,9 +66,13 @@ Each slice: write failing tests first (extend `tests/` with a fake EDINET transp
   by filer EDINET code, those under 5% marked "Below 5% (exited)", step chart of the top 5 with
   a 5% reference line; figures in ¥bn per period from `edinet_fins_latest`, with basis and
   report type. `FIN_DOC_TYPES` now also takes 150 / 170 amendments. Sidebar counts EDINET rows.)
-- [ ] **6. Setup and docs.** `run.sh` asks for an optional EDINET key on first run; README
+- [x] **6. Setup and docs.** `run.sh` asks for an optional EDINET key on first run; README
   sections for EDINET (what you get, key signup at https://api.edinet-fsa.go.jp/api/auth/index.aspx?mode=1,
-  call volume of the first sync, licence note); `.env.example` updated.
+  call volume of the first sync, licence note); `.env.example` updated. (Done: `run.sh` takes
+  `EDINET_API_KEY` from the environment, or asks once in a terminal (hidden, Enter skips and
+  writes `EDINET_SKIP=1`); never prompts without a TTY; one Python .env editor for all keys,
+  replacing commented template lines in place. `tests/test_run_sh.py` drives `run.sh` in a
+  temp copy with a stub `uv`, on a pseudo-terminal for the prompts.)
 
 ## Later (not in this run)
 

@@ -13,6 +13,7 @@ local SQLite file, and shows it in a small Streamlit dashboard.
 | Tab | Shows | Plan |
 |---|---|---|
 | **Stock** | Adjusted price and volume history for your watchlist, plus reported quarterly results (sales, profit, EPS) | Free+ |
+| **Stock** (EDINET) | Recent filings, large shareholders (5% reports) and balance sheet / cash flow by period | Free, [separate key](#edinet-optional) |
 | **Market** | One trading day across all stocks: advancers and decliners, top movers, most traded | Free+ |
 | **Investor flows** | Weekly net buying and selling by investor type (foreigners, individuals, trust banks and so on) per TSE section | Light+ |
 
@@ -34,7 +35,8 @@ git clone https://github.com/tomtomtomdev/jquantster && cd jquantster
 
 `run.sh` does everything in one step:
 1. Installs [uv](https://docs.astral.sh/uv/) if it's missing, then Python 3.12 and the dependencies.
-2. On first run, asks for your API key (input hidden) and plan, and saves them to `.env`.
+2. On first run, asks for your API key (input hidden) and plan, and an optional
+   [EDINET](#edinet-optional) key, and saves them to `.env`.
 3. Syncs new data from J-Quants.
 4. Opens the dashboard at <http://localhost:8510>.
 
@@ -45,7 +47,7 @@ Run it again any time: it only fetches what's new.
 | `./run.sh` | Install if needed → sync → dashboard |
 | `./run.sh --no-sync` | Dashboard only |
 | `./run.sh --sync-only` | Sync and exit (for cron) |
-| `JQUANTS_API_KEY=… JQUANTS_PLAN=light ./run.sh` | First-time setup without prompts |
+| `JQUANTS_API_KEY=… JQUANTS_PLAN=light EDINET_API_KEY=… ./run.sh` | First-time setup without prompts (the EDINET key is optional) |
 
 ## Configuration
 
@@ -58,6 +60,32 @@ is the template.
 | `JQUANTS_PLAN` | `free` | `free`, `light`, `standard` or `premium`. Sets the rate limit and date window. |
 | `JQUANTS_WATCHLIST` | `7203,6758,8306,9984,6861` | Stocks whose full history is fetched (4-digit TSE codes) |
 | `JQUANTS_DB` | `data/jquantster.db` | SQLite file location |
+| `EDINET_API_KEY` | – | Optional [EDINET](#edinet-optional) key. Empty: EDINET jobs are skipped. |
+| `EDINET_HISTORY_DAYS` | `365` | Days of filings fetched on the first EDINET sync |
+| `EDINET_SKIP` | – | `1` stops `run.sh` asking for an EDINET key. Written when you press Enter at that prompt. |
+
+## EDINET (optional)
+
+[EDINET](https://disclosure2.edinet-fsa.go.jp/) is the Financial Services Agency's filing
+system: annual and semiannual securities reports, large-shareholding (5%) reports and more.
+With a key, the Stock tab adds three sections below the reported results: recent filings by or
+about the company, large shareholders with their ratio over time, and balance sheet and cash
+flow figures by period.
+
+1. Get a free key at <https://api.edinet-fsa.go.jp/api/auth/index.aspx?mode=1>.
+2. Paste it when `run.sh` asks, or set `EDINET_API_KEY` in `.env`.
+
+| | |
+|---|---|
+| Calls | EDINET lists filings by day, not by company, so the sync makes one call per business day, then filters locally. Each relevant report for a watchlist stock is one more download. |
+| First sync | `EDINET_HISTORY_DAYS` (default 365) ≈ 260 calls at 50 a minute, about 5–6 minutes, plus the report downloads |
+| Later syncs | A few calls: the last 3 days are re-read, then only new reports are downloaded |
+| Rate limit | Not published; the fetcher stays near 1 request a second, budgeted separately from J-Quants |
+| No key | The jobs are skipped (`set EDINET_API_KEY to enable`) and the dashboard says how to enable them |
+
+EDINET is government open data, so the J-Quants redistribution caveat doesn't apply to it. See
+EDINET's [terms of use](https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/WZEK0030.html)
+for how it may be reused.
 
 ## Commands
 
@@ -106,6 +134,7 @@ Later syncs are shorter.
 | Market snapshot | One request per trading day returns every stock |
 | Investor flows | One request for the whole range. Each sync re-reads the last 3 weeks, because JPX re-issues corrected weeks with a new publish date. |
 | Calendar, stock list | One request each |
+| EDINET filings | One request per business day; one download per relevant report ([details](#edinet-optional)) |
 
 Each job resumes from what's already stored, and fills older gaps when the plan window moves.
 
@@ -141,6 +170,9 @@ Everything lives in one SQLite file (`data/`, git-ignored):
 | `fins_summary` | Earnings summaries, full API record kept as JSON |
 | `investor_types` | Weekly flows, every published version (`investor_types_latest` view = newest) |
 | `calendar` | TSE trading days |
+| `edinet_docs` | EDINET filings index (`edinet_codes` view maps EDINET codes to stock codes) |
+| `edinet_holdings` | Large-shareholding reports: holder, ratio, shares (`edinet_parsed` tracks parsed reports) |
+| `edinet_fins` | Balance sheet and cash flow items per report (`edinet_fins_latest` view = newest per period) |
 | `sync_log`, `entitlements`, `api_calls`, `meta` | Sync history, dataset access, rate-limit log |
 
 Notes:
@@ -149,6 +181,8 @@ Notes:
 - Investor-type values are shown in ¥bn, on the assumption that J-Quants reports them in
   thousand yen, as JPX publishes them.
 - J-Quants data is for your own use under its terms. Don't commit or publish the database.
+- EDINET figures are taken from the XBRL-converted CSVs: consolidated where reported, otherwise
+  non-consolidated (the dashboard shows which).
 
 ## Troubleshooting
 
@@ -160,6 +194,8 @@ Notes:
 | Market tab says it needs two trading days | Run `uv run jquantster sync --market-days 2`. |
 | Port 8510 in use | Run `uv run jquantster ui --server.port 8600`. |
 | Lots of `rate limit: waiting …` lines | Normal, especially on Free (3 calls a minute). |
+| `jquantster status` lists `edinet  auth_error` | The EDINET key was rejected. Re-copy it into `EDINET_API_KEY` in `.env`. |
+| Stock tab shows a box about EDINET instead of filings | No `EDINET_API_KEY` set, or no sync since adding it. Add the key and run a sync. |
 
 ## Project layout
 
@@ -169,6 +205,7 @@ schedule.sh             daily auto-sync (launchd / cron)
 src/jquantster/
   config.py             plans, limits, .env loading
   client.py             HTTP client + SQLite-backed rate limiter
+  edinet.py             EDINET client and CSV parsing
   sync.py               one job per dataset, incremental
   db.py                 schema and upserts
   cli.py                `jquantster sync | status | ui`
