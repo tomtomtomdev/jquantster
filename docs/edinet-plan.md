@@ -58,10 +58,14 @@ Each slice: write failing tests first (extend `tests/` with a fake EDINET transp
   contexts, bare or `_NonConsolidatedMember`; 相対年度 starting 前 is skipped. Consolidated wins;
   `basis` records which. View `edinet_fins_latest` takes the latest submitted doc per code,
   period and item, so a 130 amendment supersedes per item.)
-- [ ] **5. Dashboard.** Stock tab gets three sections below "Reported results": recent filings
+- [x] **5. Dashboard.** Stock tab gets three sections below "Reported results": recent filings
   (date, type, description, link to the EDINET document page), large shareholders (latest ratio per
   holder, with a ratio-over-time chart), balance sheet and cash flow by period. Empty states
-  explain how to enable EDINET. Extend the UI smoke test.
+  explain how to enable EDINET. Extend the UI smoke test. (Done: filings by or about the company,
+  newest 30, linked to `disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{docID},,`; holders grouped
+  by filer EDINET code, those under 5% marked "Below 5% (exited)", step chart of the top 5 with
+  a 5% reference line; figures in ¥bn per period from `edinet_fins_latest`, with basis and
+  report type. `FIN_DOC_TYPES` now also takes 150 / 170 amendments. Sidebar counts EDINET rows.)
 - [ ] **6. Setup and docs.** `run.sh` asks for an optional EDINET key on first run; README
   sections for EDINET (what you get, key signup at https://api.edinet-fsa.go.jp/api/auth/index.aspx?mode=1,
   call volume of the first sync, licence note); `.env.example` updated.

@@ -14,10 +14,12 @@ from jquantster.config import load_settings
 
 st.set_page_config(page_title="Jquantster", page_icon="📈", layout="wide")
 
-# Reference palette (dataviz skill): categorical slots 1-4, diverging blue/red poles.
+# Reference palette (dataviz skill): categorical slots 1-5, diverging blue/red poles.
 PALETTES = {
-    "light": {"series": ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"], "pos": "#2a78d6", "neg": "#e34948"},
-    "dark": {"series": ["#3987e5", "#d95926", "#199e70", "#c98500"], "pos": "#3987e5", "neg": "#e66767"},
+    "light": {"series": ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"],
+              "pos": "#2a78d6", "neg": "#e34948", "text": "#52514e"},
+    "dark": {"series": ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"],
+             "pos": "#3987e5", "neg": "#e66767", "text": "#c3c2b7"},
 }
 theme = getattr(getattr(st.context, "theme", None), "type", None) or "light"
 PAL = PALETTES["dark" if theme == "dark" else "light"]
@@ -36,6 +38,19 @@ SECTIONS = {
     "TSE1st": "1st Section (to 2022-04)", "TSE2nd": "2nd Section (to 2022-04)",
     "TSEMothers": "Mothers (to 2022-04)", "TSEJASDAQ": "JASDAQ (to 2022-04)",
     "TokyoNagoya": "Tokyo & Nagoya",
+}
+EDINET_DOC_TYPES = {
+    "120": "Annual report", "130": "Amended annual report", "140": "Quarterly report",
+    "150": "Amended quarterly report", "160": "Semiannual report",
+    "170": "Amended semiannual report", "180": "Extraordinary report",
+    "350": "Large-shareholding report", "360": "Change report",
+}
+# EDINET's document viewer; the API's own download links need the subscription key.
+EDINET_VIEWER = "https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?{},,"
+FIN_ITEMS = {  # edinet_fins item -> column (¥bn)
+    "total_assets": "Total assets", "net_assets": "Net assets",
+    "equity_parent": "Shareholders' equity", "cash": "Cash & equivalents",
+    "cf_operating": "Operating CF", "cf_investing": "Investing CF", "cf_financing": "Financing CF",
 }
 
 
@@ -68,6 +83,115 @@ def hover_line(df: pd.DataFrame, x: str, y: str, color: str, y_title: str, toolt
     return alt.layer(line, rule, dot)
 
 
+def doc_type_name(code) -> str:
+    return EDINET_DOC_TYPES.get(code, code or "")
+
+
+def edinet_sections(code: str) -> None:
+    """Filings, large shareholders and balance sheet / cash flow from EDINET for one stock."""
+    if counts["edinet_docs"] == 0:
+        st.info("No EDINET filings yet. Add a free `EDINET_API_KEY` to `.env`, then run "
+                "`uv run jquantster sync` for filings, large shareholders and balance sheets.")
+        return
+
+    st.subheader("Filings")
+    docs = q("""
+        SELECT d.submit_date, d.doc_type_code, d.filer_name, d.doc_description, d.doc_id
+        FROM edinet_docs d
+        WHERE COALESCE(d.withdrawal_status, '0') NOT IN ('1', '2')
+          AND (d.edinet_code IN (SELECT edinet_code FROM edinet_codes WHERE sec_code = ?1)
+               OR (d.doc_type_code IN ('350', '360') AND d.issuer_edinet_code IN
+                   (SELECT edinet_code FROM edinet_codes WHERE sec_code = ?1)))
+        ORDER BY d.submit_datetime DESC, d.doc_id DESC LIMIT 30""", code)
+    if docs.empty:
+        st.caption("No EDINET filings by or about this company in the synced period.")
+    else:
+        st.dataframe(pd.DataFrame({
+            "Date": docs.submit_date, "Type": docs.doc_type_code.map(doc_type_name),
+            "Filer": docs.filer_name, "Description": docs.doc_description,
+            "Document": docs.doc_id.map(EDINET_VIEWER.format),
+        }), hide_index=True, width="stretch", column_config={
+            "Document": st.column_config.LinkColumn("Document", display_text="Open in EDINET"),
+        })
+
+    st.subheader("Large shareholders")
+    h = q("""
+        SELECT h.*, COALESCE(d.edinet_code, h.holder) AS holder_id, d.submit_datetime
+        FROM edinet_holdings h LEFT JOIN edinet_docs d USING (doc_id)
+        WHERE h.code = ? AND h.holding_ratio IS NOT NULL
+        ORDER BY h.submit_date, d.submit_datetime, h.doc_id""", code)
+    if h.empty:
+        st.caption("No large-shareholding (5%) reports about this company in the synced period.")
+    else:
+        h["prev_report"] = h.groupby("holder_id").holding_ratio.shift()
+        latest = h.groupby("holder_id").tail(1).copy()
+        latest["change"] = latest.holding_ratio - latest.prev_holding_ratio.fillna(latest.prev_report)
+        latest = latest.sort_values("holding_ratio", ascending=False)
+        st.dataframe(pd.DataFrame({
+            "Holder": latest.holder, "Ratio (%)": latest.holding_ratio,
+            "Change (pt)": latest.change, "Shares": latest.shares_held,
+            "Report date": latest.submit_date,
+            "Status": latest.holding_ratio.map(lambda r: "Below 5% (exited)" if r < 5 else ""),
+        }), hide_index=True, width="stretch", column_config={
+            "Ratio (%)": st.column_config.NumberColumn(format="%.2f"),
+            "Change (pt)": st.column_config.NumberColumn(format="%+.2f"),
+            "Shares": st.column_config.NumberColumn(format="%,.0f"),
+        })
+        top = latest.head(len(PAL["series"]))
+        names = list(top.holder)
+        hist = h[h.holder_id.isin(top.holder_id)].copy()
+        hist["holder"] = hist.holder_id.map(dict(zip(top.holder_id, top.holder)))
+        hist["date"] = pd.to_datetime(hist.submit_date)
+        color = alt.Color("holder:N", scale=alt.Scale(domain=names, range=PAL["series"][:len(names)]),
+                          legend=alt.Legend(title=None, orient="top"))
+        lo, hi = min(hist.holding_ratio.min(), 5.0), hist.holding_ratio.max()
+        pad = max(0.5, (hi - lo) * 0.1)
+        y_scale = alt.Scale(domain=[max(0.0, lo - pad), hi + pad], nice=False)
+        base = alt.Chart(hist).encode(
+            x=alt.X("date:T", title=None, axis=alt.Axis(format="%b %Y", tickCount="month")),
+            y=alt.Y("holding_ratio:Q", title="Holding ratio (%)", scale=y_scale),
+            color=color)
+        lines = base.mark_line(strokeWidth=2, interpolate="step-after")
+        points = base.mark_point(filled=True, size=70, opacity=1).encode(tooltip=[
+            alt.Tooltip("holder:N", title="Holder"), alt.Tooltip("submit_date:N", title="Reported"),
+            alt.Tooltip("holding_ratio:Q", title="Ratio %", format=".2f"),
+            alt.Tooltip("shares_held:Q", title="Shares", format=",.0f")])
+        threshold = alt.Chart(pd.DataFrame({"y": [5.0]})).mark_rule(
+            color="gray", strokeDash=[4, 4], opacity=0.6).encode(y=alt.Y("y:Q", scale=y_scale))
+        layers = [threshold, lines, points]
+        if len(names) <= 4:  # direct labels at each holder's latest report
+            ends = hist.groupby("holder").tail(1)
+            layers.append(alt.Chart(ends).mark_text(
+                align="right", dx=-6, dy=-10, fontSize=11, color=PAL["text"]).encode(
+                x="date:T", y=alt.Y("holding_ratio:Q", scale=y_scale), text="holder:N"))
+        st.altair_chart(alt.layer(*layers).properties(height=280), width="stretch")
+        st.caption("Ratio per report, held until the next one; dashed line at the 5% reporting "
+                   f"threshold. Chart shows the {len(names)} largest holders by latest ratio.")
+
+    st.subheader("Balance sheet & cash flow")
+    f = q("""
+        SELECT l.period_end, l.item, l.value, l.basis, l.doc_type_code, l.submit_date
+        FROM edinet_fins_latest l WHERE l.code = ?""", code)
+    if f.empty:
+        st.caption("No balance-sheet or cash-flow figures from annual or semiannual reports yet.")
+        return
+    wide = f.pivot_table(index="period_end", columns="item", values="value", aggfunc="first") / 1e9
+    meta = (f.sort_values("submit_date").groupby("period_end")
+            .agg(basis=("basis", "last"), doc=("doc_type_code", "last")))
+    out = pd.DataFrame({"Period end": wide.index})
+    for item, label in FIN_ITEMS.items():
+        if item in wide:  # items no report had are left out rather than shown empty
+            out[f"{label} (¥bn)"] = wide[item].values
+    out["Basis"] = meta.basis.reindex(wide.index).map(
+        {"consolidated": "Consolidated", "non_consolidated": "Non-consolidated"}).values
+    out["Report"] = meta.doc.reindex(wide.index).map(doc_type_name).values
+    out = out.sort_values("Period end", ascending=False)
+    st.dataframe(out, hide_index=True, width="stretch", column_config={
+        c: st.column_config.NumberColumn(format="%,.1f") for c in out.columns if "¥bn" in c})
+    st.caption("From EDINET XBRL. Shareholders' equity is J-GAAP ShareholdersEquity (excludes "
+               "accumulated other comprehensive income) or IFRS equity attributable to owners.")
+
+
 # ── sidebar ──────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("Jquantster")
@@ -76,7 +200,8 @@ with st.sidebar:
                 f"**Readable window:** {db.get_meta(conn(), 'window', '—')}  \n"
                 f"**Last sync:** {db.get_meta(conn(), 'last_sync', 'never')}")
     counts = {t: q(f"SELECT COUNT(*) n FROM {t}").n[0]
-              for t in ("issues", "daily_bars", "fins_summary", "investor_types")}
+              for t in ("issues", "daily_bars", "fins_summary", "investor_types",
+                        "edinet_docs", "edinet_holdings", "edinet_fins")}
     st.dataframe(pd.DataFrame({"rows": counts}), width="stretch")
     ent = q("SELECT dataset, status FROM entitlements ORDER BY dataset")
     if not ent.empty:
@@ -148,6 +273,8 @@ with tab_stock:
                 "NP": st.column_config.NumberColumn("Net profit (¥bn)", format="%.1f"),
                 "EPS": st.column_config.NumberColumn("EPS (¥)", format="%.2f"),
             })
+
+        edinet_sections(code)
 
 # ── Market ───────────────────────────────────────────────────────────────
 with tab_market:

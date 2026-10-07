@@ -226,3 +226,13 @@ def test_status_and_estimate_show_edinet_fins(tmp_path, conn, monkeypatch, capsy
     assert cli.main(["status"]) == 0
     line = next(l for l in capsys.readouterr().out.splitlines() if l.startswith("edinet_fins"))
     assert line.split()[-1] == "17"  # 7 + 1 + 7 + 2 rows
+
+
+def test_amended_quarterly_and_semiannual_are_fetched(tmp_path):
+    conn = db.connect(tmp_path / "e.db")
+    amended_q = report("S100FN21", "2026-08-20", docTypeCode="150", periodEnd="2026-06-30")
+    amended_s = report("S100FN22", "2026-10-07", docTypeCode="170", periodEnd="2026-09-30")
+    db.upsert_edinet_docs(conn, [FN_ANNUAL, amended_q, amended_s], "2026-10-07")
+    assert {"150", "170"} <= set(db.FIN_DOC_TYPES)
+    assert [d["doc_id"] for d in db.edinet_fins_docs_todo(conn, CODES)] == [
+        "S100FN01", "S100FN21", "S100FN22"]

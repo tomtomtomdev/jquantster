@@ -87,8 +87,8 @@ CREATE TABLE IF NOT EXISTS edinet_holdings (
     doc_type_code TEXT
 );
 CREATE INDEX IF NOT EXISTS edinet_holdings_code ON edinet_holdings (code, submit_date);
--- Balance-sheet / cash-flow figures from annual (120), amended (130), quarterly (140) and
--- semiannual (160) reports, one row per item. Amendments are kept beside the original.
+-- Balance-sheet / cash-flow figures from annual (120), quarterly (140) and semiannual (160)
+-- reports and their amendments (130, 150, 170), one row per item. Amendments are kept beside the original.
 CREATE TABLE IF NOT EXISTS edinet_fins (
     code TEXT NOT NULL, doc_id TEXT NOT NULL, period_end TEXT, doc_type_code TEXT,
     item TEXT NOT NULL, value REAL, basis TEXT, PRIMARY KEY (doc_id, item)
@@ -268,7 +268,7 @@ def drop_withdrawn_holdings(conn) -> int:
         f"WHERE withdrawal_status IN ({', '.join('?' * len(WITHDRAWN))}))", WITHDRAWN).rowcount
 
 
-FIN_DOC_TYPES = ("120", "130", "140", "160")
+FIN_DOC_TYPES = ("120", "130", "140", "150", "160", "170")
 
 
 def edinet_fins_docs_todo(conn, codes) -> list:
