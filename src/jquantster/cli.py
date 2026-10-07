@@ -9,30 +9,42 @@ import sys
 import time
 import urllib.request
 import webbrowser
+from datetime import date, timedelta
 from pathlib import Path
 
 from . import db
 from .client import AuthError, JQuantsClient, RateLimiter
-from .config import load_settings
-from .sync import Syncer
+from .config import EDINET_RPM, load_settings
+from .edinet import EdinetClient
+from .sync import Syncer, edinet_start
 
 
 def _sync(args, settings) -> int:
     codes = tuple(args.codes.split(",")) if args.codes else settings.watchlist
     plan = settings.plan
     start, end = plan.window()
+    conn = db.connect(settings.db_path)
     estimate = 2 + 2 * len(codes) + args.market_days * 2 + 1
+    minutes = estimate / plan.budget_rpm
+    edinet_days = 0
+    if settings.edinet_api_key:
+        today = date.today()
+        first = edinet_start(conn, settings, today)
+        edinet_days = sum((first + timedelta(i)).weekday() < 5 for i in range((today - first).days + 1))
+        minutes += edinet_days / EDINET_RPM
     print(f"Plan {plan.name}: {plan.rpm} req/min published, using {plan.budget_rpm}. "
           f"Readable window {start} → {end}.")
-    print(f"Watchlist: {', '.join(codes) or '(none)'}; market snapshot: {args.market_days} day(s).")
-    print(f"About {estimate} calls ≈ {estimate / plan.budget_rpm:.1f} min at most "
+    print(f"Watchlist: {', '.join(codes) or '(none)'}; market snapshot: {args.market_days} day(s); "
+          + (f"EDINET: {edinet_days} day(s)." if settings.edinet_api_key
+             else "EDINET: off (set EDINET_API_KEY)."))
+    print(f"About {estimate + edinet_days} calls ≈ {minutes:.1f} min at most "
           "(less on later runs; data already stored is skipped).\n")
 
-    conn = db.connect(settings.db_path)
     limiter = RateLimiter(conn, on_wait=lambda s: print(f"  … rate limit: waiting {s:.0f}s", flush=True))
     try:
         client = JQuantsClient(settings.api_key, limiter, plan.budget_rpm, plan.fins_budget_rpm)
-        results = Syncer(settings, conn, client).run_all(codes, args.market_days)
+        edinet = EdinetClient(settings.edinet_api_key, limiter) if settings.edinet_api_key else None
+        results = Syncer(settings, conn, client, edinet=edinet).run_all(codes, args.market_days)
     except AuthError as e:
         print(f"Auth error: {e}", file=sys.stderr)
         return 2
@@ -42,7 +54,8 @@ def _sync(args, settings) -> int:
 
 def _status(settings) -> int:
     conn = db.connect(settings.db_path)
-    for table in ("issues", "daily_bars", "fins_summary", "investor_types", "calendar"):
+    for table in ("issues", "daily_bars", "fins_summary", "investor_types", "calendar",
+                  "edinet_docs"):
         print(f"{table:16} {conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]:>9,}")
     print(f"last sync        {db.get_meta(conn, 'last_sync', 'never')}")
     for r in conn.execute("SELECT * FROM entitlements ORDER BY dataset"):

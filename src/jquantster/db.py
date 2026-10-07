@@ -57,7 +57,39 @@ CREATE VIEW IF NOT EXISTS investor_types_latest AS
     JOIN (SELECT section, st_date, MAX(pub_date) AS pub_date
           FROM investor_types GROUP BY section, st_date) m
       USING (section, st_date, pub_date);
+-- EDINET filings index (documents.json); submit_date is submitDateTime's date, for ranges.
+CREATE TABLE IF NOT EXISTS edinet_docs (
+    doc_id TEXT PRIMARY KEY, edinet_code TEXT, sec_code TEXT, filer_name TEXT,
+    doc_type_code TEXT, issuer_edinet_code TEXT, subject_edinet_code TEXT,
+    submit_datetime TEXT, submit_date TEXT NOT NULL, period_end TEXT, doc_description TEXT,
+    csv_flag TEXT, withdrawal_status TEXT
+);
+CREATE INDEX IF NOT EXISTS edinet_docs_submit_date ON edinet_docs (submit_date);
+CREATE INDEX IF NOT EXISTS edinet_docs_issuer ON edinet_docs (issuer_edinet_code);
+-- Listed companies file their own reports with secCode set: EDINET code -> 5-digit code.
+CREATE VIEW IF NOT EXISTS edinet_codes AS
+    SELECT edinet_code, sec_code, filer_name FROM (
+        SELECT edinet_code, sec_code, filer_name, ROW_NUMBER() OVER (
+            PARTITION BY edinet_code ORDER BY submit_datetime DESC, doc_id DESC) AS rn
+        FROM edinet_docs
+        WHERE edinet_code IS NOT NULL AND sec_code IS NOT NULL AND sec_code != '')
+    WHERE rn = 1;
 """
+
+EDINET_DOC_COLS = {
+    # column: API field
+    "doc_id": "docID", "edinet_code": "edinetCode", "sec_code": "secCode",
+    "filer_name": "filerName", "doc_type_code": "docTypeCode",
+    "issuer_edinet_code": "issuerEdinetCode", "subject_edinet_code": "subjectEdinetCode",
+    "submit_datetime": "submitDateTime", "period_end": "periodEnd",
+    "doc_description": "docDescription", "csv_flag": "csvFlag",
+    "withdrawal_status": "withdrawalStatus",
+}
+
+
+def code5(code: str) -> str:
+    """APIs use 5-digit codes; 4-digit input means the common stock (suffix 0)."""
+    return code + "0" if len(code) == 4 else code
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -132,6 +164,33 @@ def upsert_investor_types(conn, rows) -> int:
         ],
     )
     return len(rows)
+
+
+def upsert_edinet_docs(conn, rows, day: str) -> int:
+    """`day` is the date the list was asked for; used when submitDateTime is missing."""
+    cols = [*EDINET_DOC_COLS, "submit_date"]
+    conn.executemany(
+        f"INSERT OR REPLACE INTO edinet_docs ({', '.join(cols)}) "
+        f"VALUES ({', '.join('?' * len(cols))})",
+        [
+            (*(None if r.get(f) in (None, "") else str(r[f]) for f in EDINET_DOC_COLS.values()),
+             (r.get("submitDateTime") or day)[:10])
+            for r in rows
+        ],
+    )
+    return len(rows)
+
+
+def edinet_codes_for(conn, codes) -> dict[str, str]:
+    """5-digit securities code -> EDINET code, for the codes EDINET has seen filing."""
+    wanted = [code5(c) for c in codes]
+    if not wanted:
+        return {}
+    return {
+        r["sec_code"]: r["edinet_code"] for r in conn.execute(
+            f"SELECT sec_code, edinet_code FROM edinet_codes "
+            f"WHERE sec_code IN ({', '.join('?' * len(wanted))})", wanted)
+    }
 
 
 def set_entitlement(conn, dataset: str, status: str, message: str = "") -> None:

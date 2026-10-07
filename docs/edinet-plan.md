@@ -33,7 +33,7 @@ Each slice: write failing tests first (extend `tests/` with a fake EDINET transp
   `RateLimiter` with an `edinet` bucket at 50/min, retries on 5xx/transport errors, 401/403 →
   `AuthError`, `metadata.status` ≠ 200 → error). `list_documents(date)` and
   `download_csv(doc_id)` → dict of filename → rows (parsed UTF-16 TSV).
-- [ ] **2. Filings index sync.** Table `edinet_docs` (doc_id PK and the fields above) and view or
+- [x] **2. Filings index sync.** Table `edinet_docs` (doc_id PK and the fields above) and view or
   table `edinet_codes` (edinet_code → sec_code, name). Syncer job `edinet filings`: one call per
   business day (use `calendar` when present, else weekdays) from the newest stored date
   (re-reading the last 3 days) or `today - EDINET_HISTORY_DAYS`, up to today. Skipped with a
