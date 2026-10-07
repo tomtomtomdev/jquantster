@@ -8,7 +8,23 @@ stores it in a local SQLite file, and shows it in a small Streamlit dashboard:
 - **Investor flows**: weekly net buying and selling by investor type (foreigners, individuals,
   trust banks and so on) per TSE section (needs the Light plan or higher)
 
-## Setup
+## Quick start
+
+```bash
+git clone https://github.com/tomtomtomdev/jquantster && cd jquantster
+./run.sh
+```
+
+`run.sh` does the following:
+- installs [uv](https://docs.astral.sh/uv/) if it's missing, then Python and the dependencies
+- on first run, asks for your API key and plan and saves them to `.env`
+- syncs new data and opens the dashboard at http://localhost:8510
+
+Re-running it only fetches what's new. Options: `--no-sync` (dashboard only),
+`--sync-only` (e.g. from cron). You can also skip the prompts with
+`JQUANTS_API_KEY=... JQUANTS_PLAN=light ./run.sh`.
+
+## Manual setup
 
 1. Create a J-Quants account at <https://jpx-jquants.com>. The Free plan is enough to start.
 2. In the dashboard, open **API Keys** and create a key.
