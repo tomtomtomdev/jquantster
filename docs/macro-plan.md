@@ -51,13 +51,17 @@ Each slice: write failing tests first (a fake transport in `tests/fake_macro.py`
 CSV/JSON trimmed from the real responses above), implement, run `uv run pytest -q` until green,
 tick the box, commit.
 
-- [ ] **1. Client.** `MacroClient` in `src/jquantster/macro.py` (httpx, shared `RateLimiter`
+- [x] **1. Client.** `MacroClient` in `src/jquantster/macro.py` (httpx, shared `RateLimiter`
   with a `macro` bucket, retries on 5xx/transport errors, the same shape as `EdinetClient`).
   `jgb_csv(url)` returns `[(date, {tenor: pct | None})]`: it skips the title row, maps the header
   to tenor labels and stops at the footer. `boj_series(db, codes, start)` returns
   `{code: (meta, [(date, value)])}`. It follows `NEXTPOSITION`, drops `null`s and raises
   `MacroError` when `STATUS` ≠ 200. Unit tests cover the `-` cells, the footer, pagination and
-  an error status.
+  an error status. (Done: `boj_series(db, codes, start, frequency)` sends one call per database
+  with the codes comma-separated; `boj_start` gives `YYYYMM`, or `YYYYQQ` for quarterly. Quarterly
+  survey dates become quarter ends and monthly ones month ends. The CSV is decoded as cp932 for
+  the footer, and a missing `Date,1Y` header is an error. Checked live: 5 calls fetch the full
+  MOF history, the current month and all six BOJ series since 2000.)
 - [ ] **2. Storage + sync jobs.** Tables `jgb_yields (date, tenor, yield_pct, PK(date, tenor))`,
   `macro_series (key PK, db, code, name, unit, frequency, last_update)` and
   `macro_obs (key, date, value, PK(key, date))`. Syncer jobs:
@@ -88,13 +92,14 @@ tick the box, commit.
   with `getMetadata` and adding a `BOJ_SERIES` line). `.env.example` gets `MACRO_ENABLED` and
   `MACRO_HISTORY_START`.
 
-## Open points to settle in slice 1
+## Settled in slice 1 (live, 2026-10-09)
 
-- Whether `getDataCode` accepts several comma-separated codes. If it does, use one call per
-  database.
-- The quarterly `SURVEY_DATES` format for Tankan. Store it as the quarter-end date.
-- The Tankan metadata listed 2026-03 as the last actual result. Check whether the June and
-  September 2026 surveys show up in `getDataCode`, or whether the metadata is just stale.
+- `getDataCode` accepts several comma-separated codes: one call per database.
+- Quarterly `SURVEY_DATES` are `YYYYQQ` integers (`202603` = 2026 Q3), and `startDate` for a
+  quarterly series uses the same form. The forecast series run one quarter ahead.
+- The Tankan data is current: Q3 2026 actual, released 2026-10-01. The metadata's
+  "202603" meant Q3, not March.
+- Errors arrive as HTTP 400 with a JSON body: `STATUS` 400, `MESSAGE` "Nonexistent series code：1".
 
 ## Later (not in this run)
 

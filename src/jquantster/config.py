@@ -24,6 +24,14 @@ COOLDOWN_AFTER_429 = 120  # seconds; the API sends no Retry-After
 EDINET_BASE_URL = "https://api.edinet-fsa.go.jp/api/v2"
 EDINET_RPM = 50  # unpublished limit; stay under ~1 request per second
 
+# MOF JGB yields (English CSVs) and the BOJ Time-Series Data Search API: no key, no published
+# limit, checked 2026-10-09.
+JGB_CURRENT_URL = "https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/jgbcme.csv"
+JGB_HISTORY_URL = ("https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/"
+                   "historical/jgbcme_all.csv")
+BOJ_BASE_URL = "https://www.stat-search.boj.or.jp/api/v1"
+MACRO_RPM = 20
+
 
 @dataclass(frozen=True)
 class Plan:
