@@ -280,3 +280,53 @@ def test_macro_tab_not_synced(tmp_path, monkeypatch):
     at = macro_app(tmp_path, monkeypatch, seed=None)
     infos = " ".join(i.value for i in at.tabs[3].info)
     assert "jquantster sync" in infos and "MACRO_ENABLED" in infos
+
+
+def seed_fx_tankan(conn, end=date(2026, 10, 8)):
+    import pandas as pd
+    days = pd.bdate_range(end=pd.Timestamp(end), periods=3 * 260)
+    fx = [(d.date(), round(140 + 20 * i / (len(days) - 1), 2)) for i, d in enumerate(days)]
+    meta = {"unit": "", "frequency": "DAILY", "last_update": end.isoformat()}
+    db.upsert_macro_series(conn, "usdjpy", "FM08", "FXERD01", {**meta, "name": "USD/JPY"}, fx)
+    quarters = pd.date_range(end="2026-09-30", periods=12, freq="QE")
+    q = {**meta, "frequency": "QUARTERLY"}
+    for key, code, base in (("tankan_lm", "TK99F1000601GCQ01000", 10),
+                            ("tankan_ln", "TK99F2000601GCQ01000", 30)):
+        db.upsert_macro_series(conn, key, "CO", code, q,
+                               [(d.date(), base + i) for i, d in enumerate(quarters)])
+    for key, code, v in (("tankan_lm_fc", "TK99F1000601GCQ11000", 19),
+                         ("tankan_ln_fc", "TK99F2000601GCQ11000", 38)):
+        db.upsert_macro_series(conn, key, "CO", code, q,
+                               [(date(2026, 9, 30), v - 1), (date(2026, 12, 31), v)])
+
+
+def seed_all_macro(conn):
+    seed_rates(conn)
+    seed_fx_tankan(conn)
+
+
+def test_macro_tab_fx_and_tankan(tmp_path, monkeypatch):
+    at = macro_app(tmp_path, monkeypatch, seed=seed_all_macro)
+    macro = at.tabs[3]
+    heads = [s.value for s in macro.subheader]
+    assert heads[3:] == ["USD/JPY", "Tankan business conditions"]
+    metrics = {m.label: m for m in macro.metric}
+    assert metrics["USD/JPY"].value == "¥160.00"
+    charts = macro_charts(at)
+    fx = next(s for s, _ in charts if "Yen per dollar" in s)
+    assert "%Y" in fx
+    tankan, rows = next((s, n) for s, n in charts if "Diffusion index" in s)
+    assert "Large manufacturers" in tankan and "Large non-manufacturers" in tankan
+    # 5Y range: all 12 quarters of each actual series, one forecast step each, the zero line
+    assert rows == 2 * 12 + 2 * 2 + 1
+    captions = " ".join(c.value for c in macro.caption)
+    assert "Q3 2026" in captions and "Q4 2026" in captions and "forecast" in captions
+    assert "Large manufacturers 21, non-manufacturers 41" in captions
+
+
+def test_macro_tab_without_fx_and_tankan(tmp_path, monkeypatch):
+    at = macro_app(tmp_path, monkeypatch)  # JGB and call rate only
+    heads = [s.value for s in at.tabs[3].subheader]
+    assert "USD/JPY" not in heads and "Tankan business conditions" not in heads
+    captions = " ".join(c.value for c in at.tabs[3].caption)
+    assert "No USD/JPY or Tankan data yet" in captions

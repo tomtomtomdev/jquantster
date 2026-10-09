@@ -67,10 +67,11 @@ def q(sql: str, *params) -> pd.DataFrame:
     return pd.read_sql_query(sql, conn(), params=params)
 
 
-def hover_line(df: pd.DataFrame, x: str, y: str, color: str, y_title: str, tooltip) -> alt.LayerChart:
+def hover_line(df: pd.DataFrame, x: str, y: str, color: str, y_title: str, tooltip,
+               x_axis=alt.Undefined) -> alt.LayerChart:
     """Single-series line with a crosshair + tooltip on the nearest date."""
     nearest = alt.selection_point(nearest=True, on="pointerover", fields=[x], empty=False)
-    base = alt.Chart(df).encode(x=alt.X(f"{x}:T", title=None))
+    base = alt.Chart(df).encode(x=alt.X(f"{x}:T", title=None, axis=x_axis))
     line = base.mark_line(strokeWidth=2, color=color).encode(
         y=alt.Y(f"{y}:Q", title=y_title, scale=alt.Scale(zero=False))
     )
@@ -192,7 +193,12 @@ def edinet_sections(code: str) -> None:
                "accumulated other comprehensive income) or IFRS equity attributable to owners.")
 
 
-MACRO_SOURCE = "Source: Ministry of Finance Japan (JGB yields); Bank of Japan (call rate)."
+MACRO_SOURCE = ("Source: Ministry of Finance Japan (JGB yields); Bank of Japan (call rate, "
+                "USD/JPY, Tankan).")
+TANKAN = {  # macro_obs key of the actual DI -> (forecast key, label)
+    "tankan_lm": ("tankan_lm_fc", "Large manufacturers"),
+    "tankan_ln": ("tankan_ln_fc", "Large non-manufacturers"),
+}
 RANGES = {"1Y": 1, "5Y": 5, "Max": None}  # years shown; ranges over 2 years are weekly
 
 
@@ -216,11 +222,15 @@ def clip_years(df: pd.DataFrame, years: int | None) -> pd.DataFrame:
     return df[df.date >= df.date.max() - pd.DateOffset(years=years)]
 
 
-def date_x(years: int | None) -> alt.X:
+def date_axis(years: int | None) -> alt.Axis:
     """Year ticks over long ranges, month ticks for a year."""
     if years is not None and years <= 2:
-        return alt.X("date:T", title=None, axis=alt.Axis(format="%b %Y"))
-    return alt.X("date:T", title=None, axis=alt.Axis(format="%Y", tickCount="year"))
+        return alt.Axis(format="%b %Y")
+    return alt.Axis(format="%Y", tickCount="year")
+
+
+def date_x(years: int | None) -> alt.X:
+    return alt.X("date:T", title=None, axis=date_axis(years))
 
 
 def yield_curve_chart(jgb: pd.DataFrame) -> alt.Chart:
@@ -255,6 +265,53 @@ def yield_curve_chart(jgb: pd.DataFrame) -> alt.Chart:
                      ).properties(height=300)
 
 
+def quarter(d) -> str:
+    return f"Q{(d.month - 1) // 3 + 1} {d.year}"
+
+
+def tankan_chart(obs: pd.DataFrame, years: int | None) -> tuple[alt.LayerChart, str] | None:
+    """Actual DI per group as lines; the latest forecast as a dashed segment to a hollow point."""
+    actual, forecast = [], []
+    for key, (fc_key, label) in TANKAN.items():
+        a = obs[obs.key == key].sort_values("date")
+        if a.empty:
+            continue
+        actual.append(a.assign(group=label, kind="Actual"))
+        f = obs[(obs.key == fc_key) & (obs.date > a.date.max())].sort_values("date").head(1)
+        if not f.empty:
+            forecast.append(pd.concat([a.tail(1), f]).assign(group=label, kind="Forecast"))
+    if not actual:
+        return None
+    actual = clip_years(pd.concat(actual), max(years, 3) if years else None)
+    fc = pd.concat(forecast) if forecast else actual.iloc[:0]
+    data = pd.concat([actual, fc])
+    data["quarter"] = data.date.map(quarter)
+    names = [label for _, label in TANKAN.values()]
+    color = alt.Color("group:N", scale=alt.Scale(domain=names, range=PAL["series"][:2]),
+                      legend=alt.Legend(title=None, orient="top"))
+    tooltip = [alt.Tooltip("group:N", title="Group"), alt.Tooltip("quarter:N", title="Quarter"),
+               alt.Tooltip("kind:N", title=" "), alt.Tooltip("value:Q", title="DI", format="+.0f")]
+    x = date_x(years if years and years > 2 else 5)
+    y = alt.Y("value:Q", title="Diffusion index (% points)")
+    is_actual = alt.datum.kind == "Actual"
+    data["fc_point"] = (data.kind == "Forecast") & (data.date == data.date.max())
+    base = alt.Chart(data).encode(x=x, y=y, color=color, tooltip=tooltip)
+    layers = [
+        alt.Chart(pd.DataFrame({"y": [0.0]})).mark_rule(color="gray", opacity=0.6).encode(y="y:Q"),
+        base.transform_filter(is_actual).mark_line(strokeWidth=2),
+        base.transform_filter(~is_actual).mark_line(strokeWidth=2, strokeDash=[4, 3]),
+        base.transform_filter(alt.datum.fc_point).mark_point(size=70, filled=False,
+                                                             strokeWidth=2),
+    ]
+    latest = actual[actual.date == actual.date.max()].set_index("group").value
+    note = (f"{quarter(actual.date.max())} survey: "
+            + ", ".join(f"{g if i == 0 else g.removeprefix('Large ')} {latest[g]:.0f}"
+                        for i, g in enumerate(n for n in names if n in latest)))
+    if not fc.empty:
+        note += f"; dashed: forecast for {quarter(fc.date.max())}"
+    return alt.layer(*layers).properties(height=260), note
+
+
 def macro_tab() -> None:
     jgb = q("SELECT date, tenor, yield_pct FROM jgb_yields ORDER BY date")
     call = q("SELECT date, value FROM macro_obs WHERE key = 'call_rate' ORDER BY date")
@@ -265,10 +322,16 @@ def macro_tab() -> None:
         return
     jgb["date"] = pd.to_datetime(jgb.date)
     call["date"] = pd.to_datetime(call.date)
+    fx = q("SELECT date, value FROM macro_obs WHERE key = 'usdjpy' ORDER BY date")
+    fx["date"] = pd.to_datetime(fx.date)
+    tankan = q(f"""SELECT key, date, value FROM macro_obs WHERE key IN
+                   ({", ".join("?" * 2 * len(TANKAN))}) ORDER BY date""",
+               *TANKAN, *(fc for fc, _ in TANKAN.values()))
+    tankan["date"] = pd.to_datetime(tankan.date)
 
     ten_two = jgb[jgb.tenor.isin(["2Y", "10Y"])].pivot(index="date", columns="tenor",
                                                          values="yield_pct").dropna()
-    cols = st.columns(4)
+    cols = st.columns(5)
     if not ten_two.empty:
         last = ten_two.iloc[-1]
         month_ago = ten_two[ten_two.index <= ten_two.index[-1] - pd.DateOffset(months=1)]
@@ -282,6 +345,11 @@ def macro_tab() -> None:
         cols[2].metric("10Y − 2Y", f"{spread:+.2f}pt")
     if not call.empty:
         cols[3].metric("Call rate", f"{call.value.iloc[-1]:.3f}%")
+    if not fx.empty:
+        month_ago = fx[fx.date <= fx.date.iloc[-1] - pd.DateOffset(months=1)]
+        delta = (f"{fx.value.iloc[-1] / month_ago.value.iloc[-1] - 1:+.1%} vs 1M ago"
+                 if not month_ago.empty else None)
+        cols[4].metric("USD/JPY", f"¥{fx.value.iloc[-1]:.2f}", delta, delta_color="off")
 
     if not jgb.empty:
         st.subheader("JGB yield curve")
@@ -327,6 +395,24 @@ def macro_tab() -> None:
                      alt.Tooltip("value:Q", title="Call rate %", format=".3f")],
         ).properties(height=200), width="stretch")
         st.caption(f"Uncollateralized overnight, daily average. As of {call.date.max():%Y-%m-%d}.")
+
+    if not fx.empty:
+        st.subheader("USD/JPY")
+        f = weekly_if_long(clip_years(fx, years), years)
+        tooltip = [alt.Tooltip("date:T", title="Date"),
+                   alt.Tooltip("value:Q", title="USD/JPY", format=".2f")]
+        st.altair_chart(hover_line(f, "date", "value", PAL["series"][0], "Yen per dollar",
+                                   tooltip, x_axis=date_axis(years)).properties(height=240),
+                        width="stretch")
+        st.caption(f"Spot at 9:00 JST, Tokyo market. As of {fx.date.max():%Y-%m-%d}.")
+
+    chart = tankan_chart(tankan, years) if not tankan.empty else None
+    if chart:
+        st.subheader("Tankan business conditions")
+        st.altair_chart(chart[0], width="stretch")
+        st.caption(f"Share of firms saying conditions are favorable minus unfavorable. {chart[1]}.")
+    if fx.empty and not chart:
+        st.caption("No USD/JPY or Tankan data yet: the next `uv run jquantster sync` fetches them.")
 
     st.caption(MACRO_SOURCE)
 

@@ -94,11 +94,17 @@ tick the box, commit.
   points a series), with year ticks. The dashboard no longer says "database is empty" when only
   macro data is stored. The UI tests read chart rows from the Arrow datasets attached to each
   Vega-Lite element. Checked in Chrome on live data.)
-- [ ] **4. Macro tab: FX + Tankan.** USD/JPY daily line with the same range selector. Tankan:
+- [x] **4. Macro tab: FX + Tankan.** USD/JPY daily line with the same range selector. Tankan:
   quarterly bars of large manufacturers and non-manufacturers (actual DI), with the latest
   forecast shown as a hollow bar, and a zero line. Optional overlay on the Market tab's TOPIX
   chart: USD/JPY on a secondary axis, behind a checkbox, off by default. Empty states say which
-  job to run. Extend the UI smoke test to render the Macro tab with fixture data and while empty.
+  job to run. Extend the UI smoke test to render the Macro tab with fixture data and while empty. (Done, with two changes. Tankan is drawn as
+  lines, not bars: 107 quarters of paired bars don't read at Max. The latest forecast is a dashed
+  segment from the last actual result to a hollow point, and the caption names the survey
+  quarter and both DIs. Tankan shows at least 3 years even on the 1Y range. No TOPIX overlay:
+  the Market tab has breadth and ranking tables, not a TOPIX chart, so there is nothing to
+  overlay on. USD/JPY is the fifth headline metric, with its % change vs a month earlier.
+  `hover_line` takes an optional x axis. Checked in Chrome on live data.)
 - [ ] **5. Docs.** README section "Macro data" (what's shown, sources and credit line, no key
   needed, first sync downloads ~1.2 MB from MOF, how to add a BOJ series by finding its code
   with `getMetadata` and adding a `BOJ_SERIES` line). `.env.example` gets `MACRO_ENABLED` and
