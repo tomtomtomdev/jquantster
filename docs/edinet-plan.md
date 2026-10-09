@@ -76,5 +76,4 @@ Each slice: write failing tests first (extend `tests/` with a fake EDINET transp
 
 ## Later (not in this run)
 
-- Macro tab: MOF JGB yield curve (daily CSV, no key), and selected BOJ series (FX, call rate,
-  Tankan).
+- Macro tab: planned in `docs/macro-plan.md`.
