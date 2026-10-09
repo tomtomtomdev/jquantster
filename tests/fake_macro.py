@@ -46,6 +46,16 @@ SERIES = {
         "LAST_UPDATE": 20261002,
         "VALUES": {"SURVEY_DATES": [202504, 202601, 202602, 202603],
                    "VALUES": [15, 17, 22, 24]}},
+    ("CO", "TK99F2000601GCQ01000"): {
+        "NAME_OF_TIME_SERIES": "D.I./Business Conditions/Large Enterprises/Nonmanufacturing/Actual result",
+        "UNIT": "% points", "FREQUENCY": "QUARTERLY", "CATEGORY": "TANKAN",
+        "LAST_UPDATE": 20261002,
+        "VALUES": {"SURVEY_DATES": [202602, 202603], "VALUES": [34, 35]}},
+    ("CO", "TK99F1000601GCQ11000"): {
+        "NAME_OF_TIME_SERIES": "D.I./Business Conditions/Large Enterprises/Manufacturing/Forecast",
+        "UNIT": "% points", "FREQUENCY": "QUARTERLY", "CATEGORY": "TANKAN",
+        "LAST_UPDATE": 20261002,
+        "VALUES": {"SURVEY_DATES": [202603, 202604], "VALUES": [23, 21]}},
     ("CO", "TK99F2000601GCQ11000"): {
         "NAME_OF_TIME_SERIES": "D.I./Business Conditions/Large Enterprises/Nonmanufacturing/Forecast",
         "UNIT": "% points", "FREQUENCY": "QUARTERLY", "CATEGORY": "TANKAN",

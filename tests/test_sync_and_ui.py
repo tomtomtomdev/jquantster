@@ -29,7 +29,10 @@ def test_free_plan_sync(tmp_path):
     assert res["investor types"].status == "skipped"
     edinet = ("edinet filings", "edinet holdings", "edinet financials")
     assert all(res[j].status == "skipped" for j in edinet)  # no EDINET key
-    assert all(r.status == "ok" for j, r in res.items() if j not in ("investor types", *edinet))
+    macro = ("macro jgb", "macro boj")
+    assert all(res[j].status == "skipped" for j in macro)  # no macro client given
+    assert all(r.status == "ok" for j, r in res.items()
+               if j not in ("investor types", *edinet, *macro))
     # free plan: nothing newer than 12 weeks ago
     newest = conn.execute("SELECT MAX(date) FROM daily_bars").fetchone()[0]
     assert newest <= PLANS["free"].window(TODAY)[1].isoformat()

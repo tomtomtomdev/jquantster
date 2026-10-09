@@ -102,6 +102,18 @@ CREATE VIEW IF NOT EXISTS edinet_fins_latest AS
             ORDER BY d.submit_datetime DESC, f.doc_id DESC) AS rn
         FROM edinet_fins f JOIN edinet_docs d USING (doc_id))
     WHERE rn = 1;
+-- MOF JGB yields in percent; a tenor not yet issued on a date has no row.
+CREATE TABLE IF NOT EXISTS jgb_yields (
+    date TEXT NOT NULL, tenor TEXT NOT NULL, yield_pct REAL NOT NULL, PRIMARY KEY (date, tenor)
+);
+-- BOJ series (config.BOJ_SERIES) and their observations; quarterly ones dated at quarter end.
+CREATE TABLE IF NOT EXISTS macro_series (
+    key TEXT PRIMARY KEY, db TEXT NOT NULL, code TEXT NOT NULL, name TEXT, unit TEXT,
+    frequency TEXT, last_update TEXT
+);
+CREATE TABLE IF NOT EXISTS macro_obs (
+    key TEXT NOT NULL, date TEXT NOT NULL, value REAL NOT NULL, PRIMARY KEY (key, date)
+);
 """
 
 EDINET_DOC_COLS = {
@@ -318,6 +330,26 @@ def drop_withdrawn_fins(conn) -> int:
         f"DELETE FROM edinet_fins WHERE doc_id IN (SELECT doc_id FROM edinet_docs "
         f"WHERE withdrawal_status IN ({marks}))", WITHDRAWN)
     return docs
+
+
+def upsert_jgb(conn, rows) -> int:
+    """`rows`: (date, {tenor: percent or None}) from MacroClient.jgb_csv. Returns dates stored."""
+    conn.executemany(
+        "INSERT OR REPLACE INTO jgb_yields VALUES (?, ?, ?)",
+        [(d.isoformat(), t, v) for d, yields in rows for t, v in yields.items() if v is not None],
+    )
+    return len(rows)
+
+
+def upsert_macro_series(conn, key: str, db: str, code: str, meta: dict, obs) -> int:
+    conn.execute(
+        "INSERT OR REPLACE INTO macro_series VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (key, db, code, meta.get("name"), meta.get("unit"), meta.get("frequency"),
+         meta.get("last_update")),
+    )
+    conn.executemany("INSERT OR REPLACE INTO macro_obs VALUES (?, ?, ?)",
+                     [(key, d.isoformat(), v) for d, v in obs])
+    return len(obs)
 
 
 def set_entitlement(conn, dataset: str, status: str, message: str = "") -> None:

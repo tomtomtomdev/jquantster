@@ -117,9 +117,9 @@ def test_sec_code_mapping(tmp_path, conn):
 
 def test_run_all_includes_edinet_after_jquants(tmp_path, conn):
     results = syncer(tmp_path, conn, FakeEdinet(DOCS)).run_all(("7203",), 0)
-    assert [r.job for r in results][-3:] == ["edinet filings", "edinet holdings",
+    assert [r.job for r in results if r.job.startswith("edinet")] == ["edinet filings", "edinet holdings",
                                               "edinet financials"]
-    assert all(r.status == "ok" for r in results)
+    assert all(r.status == "ok" for r in results if not r.job.startswith("macro"))
 
 
 def test_edinet_auth_error_does_not_abort_run_all(tmp_path, conn):
@@ -127,7 +127,8 @@ def test_edinet_auth_error_does_not_abort_run_all(tmp_path, conn):
     res = {r.job: r for r in results}
     assert res["edinet filings"].status == "error"
     assert "EDINET" in res["edinet filings"].message
-    assert all(r.status == "ok" for j, r in res.items() if j != "edinet filings")
+    assert all(r.status == "ok" for j, r in res.items()
+               if j != "edinet filings" and not j.startswith("macro"))
     assert db.get_meta(conn, "last_sync")
 
 

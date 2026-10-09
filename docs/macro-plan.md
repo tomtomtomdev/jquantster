@@ -62,7 +62,7 @@ tick the box, commit.
   survey dates become quarter ends and monthly ones month ends. The CSV is decoded as cp932 for
   the footer, and a missing `Date,1Y` header is an error. Checked live: 5 calls fetch the full
   MOF history, the current month and all six BOJ series since 2000.)
-- [ ] **2. Storage + sync jobs.** Tables `jgb_yields (date, tenor, yield_pct, PK(date, tenor))`,
+- [x] **2. Storage + sync jobs.** Tables `jgb_yields (date, tenor, yield_pct, PK(date, tenor))`,
   `macro_series (key PK, db, code, name, unit, frequency, last_update)` and
   `macro_obs (key, date, value, PK(key, date))`. Syncer jobs:
   - `macro jgb`: on the first run, the historical file from `MACRO_HISTORY_START` (default
@@ -74,7 +74,14 @@ tick the box, commit.
 
   Both jobs upsert, are wired into `run_all` (after the J-Quants jobs, still run when J-Quants
   fails) and the CLI call estimate, and are shown in `status`. `MACRO_ENABLED` (default true)
-  turns them off.
+  turns them off. (Done: `macro jgb` re-reads the history file while
+  meta `jgb_history_through` is older than last month, so it re-tries each run until MOF adds the
+  month. Missing tenors get no row. `macro boj` groups `BOJ_SERIES` by database and frequency
+  and starts each call from the oldest of its series' newest date minus 31 days. A disabled
+  macro marks the `macro` entitlement `disabled`. A bad J-Quants key no longer stops the run:
+  EDINET and macro still sync, then the `AuthError` is raised. The CLI estimate counts up to 5
+  macro calls. Checked live: first run 6,558 JGB days and 13,544 BOJ observations in 5 calls
+  (13 s); second run 4 calls, 3 s.)
 - [ ] **3. Macro tab: rates.** A new "Macro" tab after "Investor flows":
   - Yield curve: the latest curve plus curves from 1 month, 1 year and 3 years earlier (nearest
     stored date at or before each), x = tenor in years, one line per date, hover tooltips.

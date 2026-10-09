@@ -169,8 +169,8 @@ def test_run_all_runs_holdings_after_filings(tmp_path):
     api.docs = {"2026-10-01": [TOYOTA], "2026-10-02": [HD_350]}
     results = syncer(tmp_path, conn, api).run_all(CODES, 0)
     jobs = [r.job for r in results]
-    assert jobs[-3:] == ["edinet filings", "edinet holdings", "edinet financials"]
-    assert all(r.status == "ok" for r in results)
+    assert [j for j in jobs if j.startswith("edinet")] == ["edinet filings", "edinet holdings", "edinet financials"]
+    assert all(r.status == "ok" for r in results if not r.job.startswith("macro"))
     assert set(holdings(conn)) == {"S100HD01"}
 
 

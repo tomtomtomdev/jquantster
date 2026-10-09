@@ -210,9 +210,9 @@ def test_run_all_runs_financials_after_holdings(tmp_path):
     api = fake()
     api.docs = {"2026-10-06": [FN_SEMI]}
     results = syncer(tmp_path, conn, api).run_all(("7203",), 0)
-    assert [r.job for r in results][-3:] == ["edinet filings", "edinet holdings",
+    assert [r.job for r in results if r.job.startswith("edinet")] == ["edinet filings", "edinet holdings",
                                               "edinet financials"]
-    assert all(r.status == "ok" for r in results)
+    assert all(r.status == "ok" for r in results if not r.job.startswith("macro"))
     assert set(fins(conn, "S100FN03")) >= {"total_assets", "cash"}
 
 

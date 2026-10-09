@@ -32,6 +32,17 @@ JGB_HISTORY_URL = ("https://www.mof.go.jp/english/policy/jgbs/reference/interest
 BOJ_BASE_URL = "https://www.stat-search.boj.or.jp/api/v1"
 MACRO_RPM = 20
 
+# BOJ series to sync: key -> (database, series code, frequency). Codes from
+# getMetadata?format=json&lang=en&db=<database>; adding a line is all it takes.
+BOJ_SERIES = {
+    "usdjpy": ("FM08", "FXERD01", "DAILY"),  # USD/JPY spot at 9:00 JST, Tokyo
+    "call_rate": ("FM01", "STRDCLUCON", "DAILY"),  # uncollateralized overnight call rate, avg
+    "tankan_lm": ("CO", "TK99F1000601GCQ01000", "QUARTERLY"),  # Tankan DI, large mfg, actual
+    "tankan_ln": ("CO", "TK99F2000601GCQ01000", "QUARTERLY"),  # large non-mfg, actual
+    "tankan_lm_fc": ("CO", "TK99F1000601GCQ11000", "QUARTERLY"),  # large mfg, forecast
+    "tankan_ln_fc": ("CO", "TK99F2000601GCQ11000", "QUARTERLY"),  # large non-mfg, forecast
+}
+
 
 @dataclass(frozen=True)
 class Plan:
@@ -82,6 +93,8 @@ class Settings:
     db_path: Path
     edinet_api_key: str = ""
     edinet_history_days: int = 365
+    macro_enabled: bool = True
+    macro_history_start: date = date(2000, 1, 1)
 
 
 def load_settings() -> Settings:
@@ -99,4 +112,6 @@ def load_settings() -> Settings:
         db_path=Path(os.getenv("JQUANTS_DB", "data/jquantster.db")),
         edinet_api_key=os.getenv("EDINET_API_KEY", "").strip(),
         edinet_history_days=int(os.getenv("EDINET_HISTORY_DAYS", "365")),
+        macro_enabled=os.getenv("MACRO_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off"),
+        macro_history_start=date.fromisoformat(os.getenv("MACRO_HISTORY_START", "2000-01-01").strip()),
     )

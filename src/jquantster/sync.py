@@ -5,6 +5,8 @@ Strategy:
   - market snapshot: one call per trading day returns every stock (`date`)
   - incremental: each job resumes from the newest date already stored
   - EDINET: one documents.json call per business day lists every filing; filter locally
+  - macro: MOF's current-month JGB CSV (plus the full history when last month isn't stored
+    yet) and one BOJ call per database
 """
 
 from __future__ import annotations
@@ -19,13 +21,16 @@ import httpx
 
 from . import db
 from .client import AuthError, JQuantsClient, JQuantsError, NotEntitled
-from .config import Settings
+from .config import BOJ_SERIES, JGB_CURRENT_URL, JGB_HISTORY_URL, Settings
 from .db import code5 as _code5
 from .edinet import EdinetClient, NotFound, parse_fins, parse_holdings
+from .macro import MacroClient
 
 TSE_OPEN = ("1", "2")  # HolDiv: business day, half-day session
 EDINET_REREAD_DAYS = 3  # late filings and withdrawals show up on days already read
 EDINET_NO_KEY = "set EDINET_API_KEY to enable"
+MACRO_OFF = "MACRO_ENABLED is off"
+BOJ_REREAD_DAYS = 31  # BOJ revises recent figures
 
 
 @dataclass
@@ -40,18 +45,19 @@ class JobResult:
 class Syncer:
     def __init__(self, settings: Settings, conn, client: JQuantsClient,
                  log: Callable[[str], None] = print, today: date | None = None,
-                 edinet: EdinetClient | None = None):
+                 edinet: EdinetClient | None = None, macro: MacroClient | None = None):
         self.s = settings
         self.conn = conn
         self.client = client
         self.edinet = edinet
+        self.macro = macro
         self.log = log
         self.today = today or date.today()  # EDINET has no plan delay
         self.start, self.end = settings.plan.window(today)
 
     # -- helpers ---------------------------------------------------------
     def _run(self, job: str, dataset: str, fn: Callable[[], tuple[int, str]],
-             client: JQuantsClient | EdinetClient | None = None) -> JobResult:
+             client: JQuantsClient | EdinetClient | MacroClient | None = None) -> JobResult:
         """`client` defaults to J-Quants (plan-gated; a bad key aborts the run). Other
         sources pass their own client: their auth and network errors only fail the job."""
         external = client is not None
@@ -296,20 +302,89 @@ class Syncer:
             return stored, ", ".join(notes)
         return self._run(job, "edinet", fn, client=self.edinet)
 
+    def _macro_skip(self, job: str) -> JobResult | None:
+        if self.macro is not None and self.s.macro_enabled:
+            return None
+        self.log(f"· {job}: skipped ({MACRO_OFF})")
+        db.set_entitlement(self.conn, "macro", "disabled", MACRO_OFF)
+        return JobResult(job, "skipped", message=MACRO_OFF)
+
+    def macro_jgb(self) -> JobResult:
+        """MOF JGB yields. The current-month file every run; the full-history file (1.2 MB) on
+        the first run and again until it covers last month, then it's left alone."""
+        job = "macro jgb"
+        if skipped := self._macro_skip(job):
+            return skipped
+
+        def fn():
+            start = self.s.macro_history_start
+            last_month = (self.today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+            through = db.get_meta(self.conn, "jgb_history_through", "")
+            total, notes = 0, []
+            if through[:7] < last_month:
+                rows = [r for r in self.macro.jgb_csv(JGB_HISTORY_URL) if r[0] >= start]
+                total += db.upsert_jgb(self.conn, rows)
+                if rows:
+                    db.set_meta(self.conn, "jgb_history_through", rows[-1][0].isoformat())
+                notes.append(f"history from {start}")
+            rows = [r for r in self.macro.jgb_csv(JGB_CURRENT_URL) if r[0] >= start]
+            total += db.upsert_jgb(self.conn, rows)
+            notes.append(f"current month to {rows[-1][0]}" if rows else "current month empty")
+            return total, ", ".join(notes)
+        return self._run(job, "macro", fn, client=self.macro)
+
+    def macro_boj(self) -> JobResult:
+        """BOJ series in BOJ_SERIES: one call per database, from a month before the newest
+        stored observation (BOJ revises recent figures), else from MACRO_HISTORY_START."""
+        job = "macro boj"
+        if skipped := self._macro_skip(job):
+            return skipped
+
+        def fn():
+            groups: dict[tuple[str, str], dict[str, str]] = {}  # (db, freq) -> code -> key
+            for key, (dbname, code, freq) in BOJ_SERIES.items():
+                groups.setdefault((dbname, freq), {})[code] = key
+            newest = dict(self.conn.execute("SELECT key, MAX(date) FROM macro_obs GROUP BY key"))
+            total = 0
+            for (dbname, freq), keys in groups.items():
+                start = min(
+                    date.fromisoformat(newest[k]) - timedelta(days=BOJ_REREAD_DAYS)
+                    if k in newest else self.s.macro_history_start
+                    for k in keys.values())
+                for code, (meta, obs) in self.macro.boj_series(
+                        dbname, list(keys), start, freq).items():
+                    if code in keys:
+                        total += db.upsert_macro_series(self.conn, keys[code], dbname, code,
+                                                        meta, obs)
+            return total, f"{len(BOJ_SERIES)} series"
+        return self._run(job, "macro", fn, client=self.macro)
+
     def run_all(self, codes: tuple[str, ...], market_days: int) -> list[JobResult]:
         db.set_meta(self.conn, "plan", self.s.plan.name)
         db.set_meta(self.conn, "window", f"{self.start}..{self.end}")
-        results = [
-            self.calendar(),
-            self.master(),
-            self.watchlist_bars(codes),
-            self.watchlist_fins(codes),
-            self.market_bars(market_days) if market_days > 0 else None,
-            self.investor_types(),
+        results: list[JobResult | None] = []
+        auth_error = None
+        try:
+            results += [
+                self.calendar(),
+                self.master(),
+                self.watchlist_bars(codes),
+                self.watchlist_fins(codes),
+                self.market_bars(market_days) if market_days > 0 else None,
+                self.investor_types(),
+            ]
+        except AuthError as e:  # a bad J-Quants key: the other sources still sync
+            auth_error = e
+            self.log(f"✗ J-Quants: {e}")
+        results += [
             self.edinet_filings(),
             self.edinet_holdings(codes),
             self.edinet_financials(codes),
+            self.macro_jgb(),
+            self.macro_boj(),
         ]
+        if auth_error:
+            raise auth_error
         db.set_meta(self.conn, "last_sync", datetime.now().isoformat(timespec="seconds"))
         return [r for r in results if r]
 

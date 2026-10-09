@@ -14,8 +14,9 @@ from pathlib import Path
 
 from . import db
 from .client import AuthError, JQuantsClient, RateLimiter
-from .config import EDINET_RPM, load_settings
+from .config import BOJ_SERIES, EDINET_RPM, MACRO_RPM, load_settings
 from .edinet import EdinetClient
+from .macro import MacroClient
 from .sync import Syncer, edinet_start
 
 
@@ -36,19 +37,29 @@ def _sync(args, settings) -> int:
         edinet_calls += len(db.edinet_holding_docs_todo(conn, codes))
         edinet_calls += len(db.edinet_fins_docs_todo(conn, codes))
         minutes += edinet_calls / EDINET_RPM
+    macro_calls = 0
+    if settings.macro_enabled:
+        # current-month JGB CSV, the history file when last month isn't in yet, one BOJ call
+        # per database and frequency
+        macro_calls = 2 + len({(d, f) for d, _, f in BOJ_SERIES.values()})
+        minutes += macro_calls / MACRO_RPM
     print(f"Plan {plan.name}: {plan.rpm} req/min published, using {plan.budget_rpm}. "
           f"Readable window {start} → {end}.")
     print(f"Watchlist: {', '.join(codes) or '(none)'}; market snapshot: {args.market_days} day(s); "
-          + (f"EDINET: about {edinet_calls} call(s)." if settings.edinet_api_key
-             else "EDINET: off (set EDINET_API_KEY)."))
-    print(f"About {estimate + edinet_calls} calls ≈ {minutes:.1f} min at most "
+          + (f"EDINET: about {edinet_calls} call(s)" if settings.edinet_api_key
+             else "EDINET: off (set EDINET_API_KEY)")
+          + (f"; macro: up to {macro_calls} call(s)." if settings.macro_enabled
+             else "; macro: off."))
+    print(f"About {estimate + edinet_calls + macro_calls} calls ≈ {minutes:.1f} min at most "
           "(less on later runs; data already stored is skipped).\n")
 
     limiter = RateLimiter(conn, on_wait=lambda s: print(f"  … rate limit: waiting {s:.0f}s", flush=True))
     try:
         client = JQuantsClient(settings.api_key, limiter, plan.budget_rpm, plan.fins_budget_rpm)
         edinet = EdinetClient(settings.edinet_api_key, limiter) if settings.edinet_api_key else None
-        results = Syncer(settings, conn, client, edinet=edinet).run_all(codes, args.market_days)
+        macro = MacroClient(limiter) if settings.macro_enabled else None
+        results = Syncer(settings, conn, client, edinet=edinet, macro=macro).run_all(
+            codes, args.market_days)
     except AuthError as e:
         print(f"Auth error: {e}", file=sys.stderr)
         return 2
@@ -59,7 +70,7 @@ def _sync(args, settings) -> int:
 def _status(settings) -> int:
     conn = db.connect(settings.db_path)
     for table in ("issues", "daily_bars", "fins_summary", "investor_types", "calendar",
-                  "edinet_docs", "edinet_holdings", "edinet_fins"):
+                  "edinet_docs", "edinet_holdings", "edinet_fins", "jgb_yields", "macro_obs"):
         print(f"{table:16} {conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]:>9,}")
     print(f"last sync        {db.get_meta(conn, 'last_sync', 'never')}")
     for r in conn.execute("SELECT * FROM entitlements ORDER BY dataset"):
