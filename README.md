@@ -6,7 +6,7 @@ local SQLite file, and shows it in a small Streamlit dashboard.
 
 ![Stock tab](docs/stock.png)
 
-<sub>Screenshots use synthetic sample data. J-Quants data may not be redistributed.</sub>
+<sub>Stock, Market and Investor flows screenshots use synthetic sample data: J-Quants data may not be redistributed. The Macro screenshot shows real MOF and BOJ data.</sub>
 
 ## What you get
 
@@ -16,6 +16,7 @@ local SQLite file, and shows it in a small Streamlit dashboard.
 | **Stock** (EDINET) | Recent filings, large shareholders (5% reports) and balance sheet / cash flow by period | Free, [separate key](#edinet-optional) |
 | **Market** | One trading day across all stocks: advancers and decliners, top movers, most traded | Free+ |
 | **Investor flows** | Weekly net buying and selling by investor type (foreigners, individuals, trust banks and so on) per TSE section | Light+ |
+| **Macro** | JGB yield curve, 10Y and 2Y yields, overnight call rate, USD/JPY and the BOJ Tankan | No key, [details](#macro-data) |
 
 | Market | Investor flows |
 |---|---|
@@ -63,6 +64,8 @@ is the template.
 | `EDINET_API_KEY` | – | Optional [EDINET](#edinet-optional) key. Empty: EDINET jobs are skipped. |
 | `EDINET_HISTORY_DAYS` | `365` | Days of filings fetched on the first EDINET sync |
 | `EDINET_SKIP` | – | `1` stops `run.sh` asking for an EDINET key. Written when you press Enter at that prompt. |
+| `MACRO_ENABLED` | `1` | `0` turns off the [macro](#macro-data) jobs |
+| `MACRO_HISTORY_START` | `2000-01-01` | Earliest date of JGB and BOJ data kept |
 
 ## EDINET (optional)
 
@@ -86,6 +89,35 @@ flow figures by period.
 EDINET is government open data, so the J-Quants redistribution caveat doesn't apply to it. See
 EDINET's [terms of use](https://disclosure2dl.edinet-fsa.go.jp/guide/static/disclosure/WZEK0030.html)
 for how it may be reused.
+
+## Macro data
+
+The Macro tab needs no key. It shows the latest JGB yield curve against 1 month, 1 year and 3
+years earlier, 10Y and 2Y yields with the gap between them, the overnight call rate, USD/JPY and
+the Bank of Japan's Tankan business conditions for large manufacturers and non-manufacturers,
+including the next-quarter forecast. A range selector picks 1 year, 5 years or everything.
+
+![Macro tab](docs/macro.png)
+
+| | |
+|---|---|
+| Sources | [Ministry of Finance](https://www.mof.go.jp/english/policy/jgbs/reference/interest_rate/index.htm) JGB yield CSVs; [Bank of Japan](https://www.stat-search.boj.or.jp/) time-series API |
+| First sync | 5 calls, under 15 seconds. MOF's full history file is about 1.2 MB; data before `MACRO_HISTORY_START` is dropped. |
+| Later syncs | 4 calls: MOF's current-month file and one BOJ call per database. BOJ figures from the last month are re-read, because BOJ revises them. |
+| Rate limit | Not published; the fetcher stays at 20 a minute, budgeted separately |
+| Freshness | Yields, the call rate and USD/JPY lag a business day or two. The Tankan is published four times a year: early April, July and October, and mid-December. |
+
+Both are government open data and may be reused with the source credited, which the tab does.
+
+**Adding a BOJ series.** Find its code in the BOJ database listing, for example
+<https://www.stat-search.boj.or.jp/api/v1/getMetadata?format=json&lang=en&db=FM08> for foreign
+exchange. Then add a line to `BOJ_SERIES` in `src/jquantster/config.py`:
+
+```python
+"eurjpy": ("FM08", "FXERD31", "DAILY"),
+```
+
+The next sync stores it in `macro_obs` under that key. Showing it in the tab is up to you.
 
 ## Commands
 
@@ -135,6 +167,7 @@ Later syncs are shorter.
 | Investor flows | One request for the whole range. Each sync re-reads the last 3 weeks, because JPX re-issues corrected weeks with a new publish date. |
 | Calendar, stock list | One request each |
 | EDINET filings | One request per business day; one download per relevant report ([details](#edinet-optional)) |
+| Macro | MOF's current-month CSV (plus the history file until it covers last month) and one BOJ request per database ([details](#macro-data)) |
 
 Each job resumes from what's already stored, and fills older gaps when the plan window moves.
 
@@ -173,6 +206,8 @@ Everything lives in one SQLite file (`data/`, git-ignored):
 | `edinet_docs` | EDINET filings index (`edinet_codes` view maps EDINET codes to stock codes) |
 | `edinet_holdings` | Large-shareholding reports: holder, ratio, shares (`edinet_parsed` tracks parsed reports) |
 | `edinet_fins` | Balance sheet and cash flow items per report (`edinet_fins_latest` view = newest per period) |
+| `jgb_yields` | MOF JGB yields per date and tenor, in percent |
+| `macro_series`, `macro_obs` | BOJ series (`BOJ_SERIES`) and their observations; quarterly ones dated at quarter end |
 | `sync_log`, `entitlements`, `api_calls`, `meta` | Sync history, dataset access, rate-limit log |
 
 Notes:
@@ -196,6 +231,8 @@ Notes:
 | Lots of `rate limit: waiting …` lines | Normal, especially on Free (3 calls a minute). |
 | `jquantster status` lists `edinet  auth_error` | The EDINET key was rejected. Re-copy it into `EDINET_API_KEY` in `.env`. |
 | Stock tab shows a box about EDINET instead of filings | No `EDINET_API_KEY` set, or no sync since adding it. Add the key and run a sync. |
+| `macro boj` fails with `Nonexistent series code` | A code in `BOJ_SERIES` is wrong or was retired. Check it against the BOJ metadata listing. |
+| Macro tab says there's no data | Run a sync, and check `MACRO_ENABLED` isn't `0`. |
 
 ## Project layout
 
@@ -206,6 +243,7 @@ src/jquantster/
   config.py             plans, limits, .env loading
   client.py             HTTP client + SQLite-backed rate limiter
   edinet.py             EDINET client and CSV parsing
+  macro.py              MOF JGB CSV and BOJ API client
   sync.py               one job per dataset, incremental
   db.py                 schema and upserts
   cli.py                `jquantster sync | status | ui`

@@ -246,7 +246,7 @@ def test_macro_tab_rates(tmp_path, monkeypatch):
     assert metrics["10Y − 2Y"] == "+0.80pt" and metrics["Call rate"] == "1.227%"
     specs = [s for s, _ in macro_charts(at)]
     curve = next(s for s in specs if "Tenor (years)" in s)
-    assert "2026-10-08" in curve and "1 year earlier" in curve and "3 years earlier" in curve
+    assert "2026-10-08" in curve and "2025-10-08 (−1Y)" in curve and "(−3Y)" in curve
     assert any("10Y − 2Y (pt)" in s for s in specs)
     assert any("step-after" in s and "Call rate" in s for s in specs)
     captions = " ".join(c.value for c in macro.caption)
@@ -311,7 +311,7 @@ def test_macro_tab_fx_and_tankan(tmp_path, monkeypatch):
     heads = [s.value for s in macro.subheader]
     assert heads[3:] == ["USD/JPY", "Tankan business conditions"]
     metrics = {m.label: m for m in macro.metric}
-    assert metrics["USD/JPY"].value == "¥160.00"
+    assert metrics["USD/JPY (¥)"].value == "160.00"
     charts = macro_charts(at)
     fx = next(s for s, _ in charts if "Yen per dollar" in s)
     assert "%Y" in fx

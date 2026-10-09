@@ -238,16 +238,15 @@ def yield_curve_chart(jgb: pd.DataFrame) -> alt.Chart:
     dates = jgb.date.drop_duplicates().sort_values()
     latest = dates.iloc[-1]
     picks = {"Latest": latest}
-    for label, offset in (("1 month earlier", pd.DateOffset(months=1)),
-                          ("1 year earlier", pd.DateOffset(years=1)),
-                          ("3 years earlier", pd.DateOffset(years=3))):
+    for label, offset in (("−1M", pd.DateOffset(months=1)), ("−1Y", pd.DateOffset(years=1)),
+                          ("−3Y", pd.DateOffset(years=3))):
         before = dates[dates <= latest - offset]
         if not before.empty and before.iloc[-1] not in picks.values():
             picks[label] = before.iloc[-1]
     curves = []
     for label, d in picks.items():
         c = jgb[jgb.date == d].copy()
-        c["curve"] = f"{label} ({d:%Y-%m-%d})" if label != "Latest" else f"{d:%Y-%m-%d}"
+        c["curve"] = f"{d:%Y-%m-%d} ({label})" if label != "Latest" else f"{d:%Y-%m-%d}"
         curves.append(c)
     curves = pd.concat(curves)
     curves["years"] = curves.tenor.map(tenor_years)
@@ -338,7 +337,7 @@ def macro_tab() -> None:
         prev = month_ago.iloc[-1] if not month_ago.empty else None
 
         def bp(t):
-            return f"{(last[t] - prev[t]) * 100:+.0f}bp vs 1M ago" if prev is not None else None
+            return f"{(last[t] - prev[t]) * 100:+.0f}bp in 1M" if prev is not None else None
         cols[0].metric("JGB 10Y", f"{last['10Y']:.3f}%", bp("10Y"), delta_color="off")
         cols[1].metric("JGB 2Y", f"{last['2Y']:.3f}%", bp("2Y"), delta_color="off")
         spread = last["10Y"] - last["2Y"]
@@ -347,9 +346,9 @@ def macro_tab() -> None:
         cols[3].metric("Call rate", f"{call.value.iloc[-1]:.3f}%")
     if not fx.empty:
         month_ago = fx[fx.date <= fx.date.iloc[-1] - pd.DateOffset(months=1)]
-        delta = (f"{fx.value.iloc[-1] / month_ago.value.iloc[-1] - 1:+.1%} vs 1M ago"
+        delta = (f"{fx.value.iloc[-1] / month_ago.value.iloc[-1] - 1:+.1%} in 1M"
                  if not month_ago.empty else None)
-        cols[4].metric("USD/JPY", f"¥{fx.value.iloc[-1]:.2f}", delta, delta_color="off")
+        cols[4].metric("USD/JPY (¥)", f"{fx.value.iloc[-1]:.2f}", delta, delta_color="off")
 
     if not jgb.empty:
         st.subheader("JGB yield curve")

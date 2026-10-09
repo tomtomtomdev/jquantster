@@ -105,10 +105,13 @@ tick the box, commit.
   the Market tab has breadth and ranking tables, not a TOPIX chart, so there is nothing to
   overlay on. USD/JPY is the fifth headline metric, with its % change vs a month earlier.
   `hover_line` takes an optional x axis. Checked in Chrome on live data.)
-- [ ] **5. Docs.** README section "Macro data" (what's shown, sources and credit line, no key
+- [x] **5. Docs.** README section "Macro data" (what's shown, sources and credit line, no key
   needed, first sync downloads ~1.2 MB from MOF, how to add a BOJ series by finding its code
   with `getMetadata` and adding a `BOJ_SERIES` line). `.env.example` gets `MACRO_ENABLED` and
-  `MACRO_HISTORY_START`.
+  `MACRO_HISTORY_START`. (Done: also a Macro row in "What you get", a
+  `docs/macro.png` screenshot of real MOF/BOJ data, rows in "How it fetches", "Data and
+  storage", "Troubleshooting" and the project layout. Shorter metric and legend labels so the
+  tab fits a 1,100 px window.)
 
 ## Settled in slice 1 (live, 2026-10-09)
 
