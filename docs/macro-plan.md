@@ -82,13 +82,18 @@ tick the box, commit.
   EDINET and macro still sync, then the `AuthError` is raised. The CLI estimate counts up to 5
   macro calls. Checked live: first run 6,558 JGB days and 13,544 BOJ observations in 5 calls
   (13 s); second run 4 calls, 3 s.)
-- [ ] **3. Macro tab: rates.** A new "Macro" tab after "Investor flows":
+- [x] **3. Macro tab: rates.** A new "Macro" tab after "Investor flows":
   - Yield curve: the latest curve plus curves from 1 month, 1 year and 3 years earlier (nearest
     stored date at or before each), x = tenor in years, one line per date, hover tooltips.
   - 10Y and 2Y history, with the 10Y−2Y spread as a second chart. Date range selector with
     1Y / 5Y / max.
   - Call-rate history as a step chart.
-  - Each chart is captioned with its "as of" date and source.
+  - Each chart is captioned with its "as of" date and source. (Done: four headline metrics (10Y and 2Y
+  with bp change vs a month earlier, 10Y−2Y, call rate). The range selector sits below the curve,
+  which doesn't use it. Ranges over 2 years plot the Friday close of each week (Max ≈ 1,400
+  points a series), with year ticks. The dashboard no longer says "database is empty" when only
+  macro data is stored. The UI tests read chart rows from the Arrow datasets attached to each
+  Vega-Lite element. Checked in Chrome on live data.)
 - [ ] **4. Macro tab: FX + Tankan.** USD/JPY daily line with the same range selector. Tankan:
   quarterly bars of large manufacturers and non-manufacturers (actual DI), with the latest
   forecast shown as a hollow bar, and a zero line. Optional overlay on the Market tab's TOPIX

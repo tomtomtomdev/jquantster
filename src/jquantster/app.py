@@ -192,6 +192,145 @@ def edinet_sections(code: str) -> None:
                "accumulated other comprehensive income) or IFRS equity attributable to owners.")
 
 
+MACRO_SOURCE = "Source: Ministry of Finance Japan (JGB yields); Bank of Japan (call rate)."
+RANGES = {"1Y": 1, "5Y": 5, "Max": None}  # years shown; ranges over 2 years are weekly
+
+
+def tenor_years(tenor: str) -> int:
+    return int(tenor.removesuffix("Y"))
+
+
+def weekly_if_long(df: pd.DataFrame, years: int | None, by: str | None = None) -> pd.DataFrame:
+    """Daily rows for short ranges; the last value of each week beyond 2 years, which keeps
+    charts light (27 years of daily data is ~7,000 points per series)."""
+    if years is not None and years <= 2:
+        return df
+    keys = [by] if by else []
+    return (df.set_index("date").groupby(keys + [pd.Grouper(freq="W-FRI")]).last()
+            .reset_index().dropna())
+
+
+def clip_years(df: pd.DataFrame, years: int | None) -> pd.DataFrame:
+    if years is None or df.empty:
+        return df
+    return df[df.date >= df.date.max() - pd.DateOffset(years=years)]
+
+
+def date_x(years: int | None) -> alt.X:
+    """Year ticks over long ranges, month ticks for a year."""
+    if years is not None and years <= 2:
+        return alt.X("date:T", title=None, axis=alt.Axis(format="%b %Y"))
+    return alt.X("date:T", title=None, axis=alt.Axis(format="%Y", tickCount="year"))
+
+
+def yield_curve_chart(jgb: pd.DataFrame) -> alt.Chart:
+    """Latest curve against 1 month, 1 year and 3 years earlier (nearest date on or before)."""
+    dates = jgb.date.drop_duplicates().sort_values()
+    latest = dates.iloc[-1]
+    picks = {"Latest": latest}
+    for label, offset in (("1 month earlier", pd.DateOffset(months=1)),
+                          ("1 year earlier", pd.DateOffset(years=1)),
+                          ("3 years earlier", pd.DateOffset(years=3))):
+        before = dates[dates <= latest - offset]
+        if not before.empty and before.iloc[-1] not in picks.values():
+            picks[label] = before.iloc[-1]
+    curves = []
+    for label, d in picks.items():
+        c = jgb[jgb.date == d].copy()
+        c["curve"] = f"{label} ({d:%Y-%m-%d})" if label != "Latest" else f"{d:%Y-%m-%d}"
+        curves.append(c)
+    curves = pd.concat(curves)
+    curves["years"] = curves.tenor.map(tenor_years)
+    names = list(dict.fromkeys(curves.curve))
+    color = alt.Color("curve:N", scale=alt.Scale(domain=names, range=PAL["series"][:len(names)]),
+                      legend=alt.Legend(title=None, orient="top", labelLimit=0))
+    base = alt.Chart(curves).encode(
+        x=alt.X("years:Q", title="Tenor (years)", scale=alt.Scale(domain=[0, 40]),
+                axis=alt.Axis(values=[1, 2, 5, 10, 20, 30, 40])),
+        y=alt.Y("yield_pct:Q", title="Yield (%)", scale=alt.Scale(zero=False)),
+        color=color,
+        tooltip=[alt.Tooltip("curve:N", title="Date"), alt.Tooltip("tenor:N", title="Tenor"),
+                 alt.Tooltip("yield_pct:Q", title="Yield %", format=".3f")])
+    return alt.layer(base.mark_line(strokeWidth=2), base.mark_point(filled=True, size=40)
+                     ).properties(height=300)
+
+
+def macro_tab() -> None:
+    jgb = q("SELECT date, tenor, yield_pct FROM jgb_yields ORDER BY date")
+    call = q("SELECT date, value FROM macro_obs WHERE key = 'call_rate' ORDER BY date")
+    if jgb.empty and call.empty:
+        st.info("No macro data yet. Run `uv run jquantster sync`: JGB yields (Ministry of "
+                "Finance) and Bank of Japan series need no key. Check `MACRO_ENABLED` isn't "
+                "set to 0 in `.env`.")
+        return
+    jgb["date"] = pd.to_datetime(jgb.date)
+    call["date"] = pd.to_datetime(call.date)
+
+    ten_two = jgb[jgb.tenor.isin(["2Y", "10Y"])].pivot(index="date", columns="tenor",
+                                                         values="yield_pct").dropna()
+    cols = st.columns(4)
+    if not ten_two.empty:
+        last = ten_two.iloc[-1]
+        month_ago = ten_two[ten_two.index <= ten_two.index[-1] - pd.DateOffset(months=1)]
+        prev = month_ago.iloc[-1] if not month_ago.empty else None
+
+        def bp(t):
+            return f"{(last[t] - prev[t]) * 100:+.0f}bp vs 1M ago" if prev is not None else None
+        cols[0].metric("JGB 10Y", f"{last['10Y']:.3f}%", bp("10Y"), delta_color="off")
+        cols[1].metric("JGB 2Y", f"{last['2Y']:.3f}%", bp("2Y"), delta_color="off")
+        spread = last["10Y"] - last["2Y"]
+        cols[2].metric("10Y − 2Y", f"{spread:+.2f}pt")
+    if not call.empty:
+        cols[3].metric("Call rate", f"{call.value.iloc[-1]:.3f}%")
+
+    if not jgb.empty:
+        st.subheader("JGB yield curve")
+        st.altair_chart(yield_curve_chart(jgb), width="stretch")
+        st.caption(f"As of {jgb.date.max():%Y-%m-%d}. Constant-maturity yields, each curve "
+                   "on the nearest business day on or before the date.")
+
+    years = RANGES[st.radio("Range", list(RANGES), index=1, horizontal=True)]
+
+    if not ten_two.empty:
+        st.subheader("10Y and 2Y yields")
+        long = clip_years(ten_two.reset_index(), years).melt(
+            id_vars="date", value_vars=["10Y", "2Y"], var_name="tenor", value_name="yield_pct")
+        long = weekly_if_long(long, years, by="tenor")
+        color = alt.Color("tenor:N", scale=alt.Scale(domain=["10Y", "2Y"],
+                          range=PAL["series"][:2]), legend=alt.Legend(title=None, orient="top"))
+        st.altair_chart(alt.Chart(long).mark_line(strokeWidth=2).encode(
+            x=date_x(years), y=alt.Y("yield_pct:Q", title="Yield (%)"),
+            color=color, tooltip=[alt.Tooltip("date:T", title="Date"),
+                                  alt.Tooltip("tenor:N", title="Tenor"),
+                                  alt.Tooltip("yield_pct:Q", title="Yield %", format=".3f")],
+        ).properties(height=260), width="stretch")
+        sp = clip_years(ten_two.reset_index(), years)
+        sp = weekly_if_long(sp.assign(spread=sp["10Y"] - sp["2Y"])[["date", "spread"]], years)
+        zero = alt.Chart(pd.DataFrame({"y": [0.0]})).mark_rule(color="gray", opacity=0.6
+                                                               ).encode(y="y:Q")
+        st.altair_chart(alt.layer(zero, alt.Chart(sp).mark_area(
+            line={"color": PAL["series"][2]}, color=PAL["series"][2], opacity=0.25).encode(
+            x=date_x(years), y=alt.Y("spread:Q", title="10Y − 2Y (pt)"),
+            tooltip=[alt.Tooltip("date:T", title="Date"),
+                     alt.Tooltip("spread:Q", title="10Y − 2Y", format="+.3f")],
+        )).properties(height=140), width="stretch")
+        st.caption(f"As of {ten_two.index[-1]:%Y-%m-%d}. "
+                   + ("Daily." if years is not None and years <= 2 else "Weekly (Friday)."))
+
+    if not call.empty:
+        st.subheader("Overnight call rate")
+        c = weekly_if_long(clip_years(call, years), years)
+        st.altair_chart(alt.Chart(c).mark_line(interpolate="step-after", strokeWidth=2,
+                                               color=PAL["series"][0]).encode(
+            x=date_x(years), y=alt.Y("value:Q", title="Call rate (%)"),
+            tooltip=[alt.Tooltip("date:T", title="Date"),
+                     alt.Tooltip("value:Q", title="Call rate %", format=".3f")],
+        ).properties(height=200), width="stretch")
+        st.caption(f"Uncollateralized overnight, daily average. As of {call.date.max():%Y-%m-%d}.")
+
+    st.caption(MACRO_SOURCE)
+
+
 # ── sidebar ──────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("Jquantster")
@@ -201,7 +340,8 @@ with st.sidebar:
                 f"**Last sync:** {db.get_meta(conn(), 'last_sync', 'never')}")
     counts = {t: q(f"SELECT COUNT(*) n FROM {t}").n[0]
               for t in ("issues", "daily_bars", "fins_summary", "investor_types",
-                        "edinet_docs", "edinet_holdings", "edinet_fins")}
+                        "edinet_docs", "edinet_holdings", "edinet_fins", "jgb_yields",
+                        "macro_obs")}
     st.dataframe(pd.DataFrame({"rows": counts}), width="stretch")
     ent = q("SELECT dataset, status FROM entitlements ORDER BY dataset")
     if not ent.empty:
@@ -210,11 +350,12 @@ with st.sidebar:
     st.caption("Refresh data from a terminal:")
     st.code("uv run jquantster sync", language="bash")
 
-if counts["daily_bars"] == 0 and counts["investor_types"] == 0:
+if not any(counts[t] for t in ("daily_bars", "investor_types", "jgb_yields", "macro_obs")):
     st.info("The database is empty. Add your API key to `.env`, then run `uv run jquantster sync`.")
     st.stop()
 
-tab_stock, tab_market, tab_flows = st.tabs(["Stock", "Market", "Investor flows"])
+tab_stock, tab_market, tab_flows, tab_macro = st.tabs(
+    ["Stock", "Market", "Investor flows", "Macro"])
 
 # ── Stock ────────────────────────────────────────────────────────────────
 with tab_stock:
@@ -382,3 +523,7 @@ with tab_flows:
                 tbl[f"{k}Bal"] = tbl[f"{k}Bal"] / 1e6
             st.dataframe(tbl.rename(columns={f"{k}Bal": v for k, v in INVESTORS.items()})
                          .sort_values("st_date", ascending=False), hide_index=True, width="stretch")
+
+# ── Macro ────────────────────────────────────────────────────────────────
+with tab_macro:
+    macro_tab()

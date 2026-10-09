@@ -72,7 +72,7 @@ def test_dashboard_renders(tmp_path, monkeypatch, plan, entitled):
     monkeypatch.setenv("JQUANTS_PLAN", plan)
     at = AppTest.from_file(str(APP), default_timeout=30).run()
     assert not at.exception, at.exception
-    assert len(at.tabs) == 3
+    assert len(at.tabs) == 4
     assert len(at.metric) >= 6  # stock + market headline numbers
     flows_info = [i.value for i in at.info]
     if plan == "free":
@@ -185,3 +185,98 @@ def test_dashboard_edinet_not_synced(tmp_path, monkeypatch):
     infos = [i.value for i in at.info if "EDINET" in i.value]
     assert len(infos) == 1 and "EDINET_API_KEY" in infos[0]
     assert "Filings" not in [s.value for s in at.subheader]
+
+
+# ── Macro tab ────────────────────────────────────────────────────────────
+TENORS = ["1Y", "2Y", "3Y", "4Y", "5Y", "6Y", "7Y", "8Y", "9Y", "10Y", "15Y", "20Y", "25Y",
+          "30Y", "40Y"]
+
+
+def seed_rates(conn, end=date(2026, 10, 8), years=4):
+    """Business days of JGB yields rising with tenor and time, and a stepped call rate."""
+    import pandas as pd
+    days = pd.bdate_range(end=pd.Timestamp(end), periods=years * 260)
+    rows = []
+    for i, d in enumerate(days):
+        base = 0.2 + 1.5 * i / (len(days) - 1)
+        rows.append((d.date(), {t: round(base + 0.1 * k, 3) for k, t in enumerate(TENORS)
+                                if t != "40Y" or i > 100}))
+    db.upsert_jgb(conn, rows)
+    call = [(d.date(), 0.977 if i < len(days) - 10 else 1.227) for i, d in enumerate(days)]
+    db.upsert_macro_series(conn, "call_rate", "FM01", "STRDCLUCON",
+                           {"name": "Call Rate", "unit": "percent per annum",
+                            "frequency": "DAILY", "last_update": end.isoformat()}, call)
+    return days
+
+
+def macro_app(tmp_path, monkeypatch, seed_jquants=True, seed=seed_rates):
+    from streamlit.testing.v1 import AppTest
+    if seed_jquants:
+        conn, _, _ = run_sync(tmp_path, "free", {"calendar", "master", "bars", "fins"})
+    else:
+        conn = db.connect(tmp_path / "s.db")
+    if seed:
+        seed(conn)
+    monkeypatch.setenv("JQUANTS_DB", str(tmp_path / "s.db"))
+    monkeypatch.setenv("JQUANTS_PLAN", "free")
+    at = AppTest.from_file(str(APP), default_timeout=30).run()
+    assert not at.exception, at.exception
+    return at
+
+
+def macro_charts(at):
+    """(spec as text with non-ASCII kept, rows in its data) for each Macro tab chart."""
+    import json
+    import pyarrow as pa
+    out = []
+    for c in at.tabs[3].get("vega_lite_chart"):
+        rows = sum(pa.ipc.open_stream(d.data.data).read_all().num_rows for d in c.proto.datasets)
+        out.append((json.dumps(json.loads(c.proto.spec), ensure_ascii=False), rows))
+    return out
+
+
+def test_macro_tab_rates(tmp_path, monkeypatch):
+    at = macro_app(tmp_path, monkeypatch)
+    assert [t.label for t in at.tabs] == ["Stock", "Market", "Investor flows", "Macro"]
+    macro = at.tabs[3]
+    heads = [s.value for s in macro.subheader]
+    assert heads[:3] == ["JGB yield curve", "10Y and 2Y yields", "Overnight call rate"]
+    metrics = {m.label: m.value for m in macro.metric}
+    assert metrics["JGB 10Y"] == "2.600%" and metrics["JGB 2Y"] == "1.800%"
+    assert metrics["10Y − 2Y"] == "+0.80pt" and metrics["Call rate"] == "1.227%"
+    specs = [s for s, _ in macro_charts(at)]
+    curve = next(s for s in specs if "Tenor (years)" in s)
+    assert "2026-10-08" in curve and "1 year earlier" in curve and "3 years earlier" in curve
+    assert any("10Y − 2Y (pt)" in s for s in specs)
+    assert any("step-after" in s and "Call rate" in s for s in specs)
+    captions = " ".join(c.value for c in macro.caption)
+    assert "Ministry of Finance" in captions and "Bank of Japan" in captions
+
+
+def history_rows(at):
+    return next(n for s, n in macro_charts(at) if '"Yield (%)"' in s and '"field": "years"' not in s)
+
+
+def test_macro_range_selector_and_long_ranges_are_weekly(tmp_path, monkeypatch):
+    at = macro_app(tmp_path, monkeypatch)
+    radio = next(r for r in at.tabs[3].radio if r.label == "Range")
+    assert radio.value == "5Y"
+    assert history_rows(at) <= 2 * 4 * 53  # weekly over the four seeded years
+    at = radio.set_value("1Y").run()
+    assert not at.exception, at.exception
+    assert 2 * 250 <= history_rows(at) <= 2 * 262  # one year of daily 2Y + 10Y
+    at = next(r for r in at.tabs[3].radio if r.label == "Range").set_value("Max").run()
+    assert not at.exception, at.exception
+    assert history_rows(at) <= 2 * 4 * 53
+
+
+def test_macro_tab_works_without_jquants_data(tmp_path, monkeypatch):
+    at = macro_app(tmp_path, monkeypatch, seed_jquants=False)
+    assert "database is empty" not in " ".join(i.value for i in at.info)
+    assert "JGB yield curve" in [s.value for s in at.tabs[3].subheader]
+
+
+def test_macro_tab_not_synced(tmp_path, monkeypatch):
+    at = macro_app(tmp_path, monkeypatch, seed=None)
+    infos = " ".join(i.value for i in at.tabs[3].info)
+    assert "jquantster sync" in infos and "MACRO_ENABLED" in infos
